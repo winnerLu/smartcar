@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>car_bringup</name>
+  <version>0.0.0</version>
+  <description>smartcar 一键启动:底盘 car_base + 激光雷达</description>
+  <maintainer email="lushici@ldrobot.com">lsc</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <exec_depend>car_base</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <!-- 雷达包 ldlidar 位于独立的 SDK 工作空间(~/sdk_.../ros2_app),
+       通过 overlay source 提供,不在此声明为 rosdep 依赖 -->
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

@@ -1,0 +1,20 @@
+# car_base 节点参数(实测标定值见 docs/protocols/car_base_标定记录.md)
+car_base:
+  ros__parameters:
+    port: /dev/ttyACM0
+    baud: 115200
+    # 角速度符号(实测)
+    cmd_wz_sign: 1
+    odom_wz_sign: 1
+    # 幅值标定(待精调,先用 1.0;反馈角速度实测约 3 倍需后续标定)
+    odom_wz_scale: 1.0
+    odom_vx_scale: 1.0
+    voltage_scale: 1.0
+    # 超时保护:200ms 无 cmd_vel 自动停车
+    cmd_timeout_ms: 200
+    # IMU 未到货,先关闭
+    publish_imu: false
+    # 坐标系
+    odom_frame: odom
+    base_frame: base_link
+    publish_tf: true
