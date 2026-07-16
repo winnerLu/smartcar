@@ -1,7 +1,7 @@
 # car_base 节点参数(实测标定值见 docs/protocols/car_base_标定记录.md)
 car_base:
   ros__parameters:
-    port: /dev/ttyACM0
+    port: /dev/car_base   # udev 固定软链接(见 99-smartcar.rules),不受 ttyACM 编号漂移影响
     baud: 115200
     # 角速度符号(实测)
     cmd_wz_sign: 1
@@ -12,8 +12,8 @@ car_base:
     voltage_scale: 1.0
     # 超时保护:200ms 无 cmd_vel 自动停车
     cmd_timeout_ms: 200
-    # IMU 未到货,先关闭
-    publish_imu: false
+    # IMU 已装并验证通过,发布 /imu/data_raw
+    publish_imu: true
     # 坐标系
     odom_frame: odom
     base_frame: base_link

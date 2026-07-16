@@ -1,0 +1,13 @@
+# smartcar udev 规则:固定串口设备名
+# 部署到香橙派: sudo cp 99-smartcar.rules /etc/udev/rules.d/
+#              sudo udevadm control --reload-rules && sudo udevadm trigger
+#
+# 设备标识(2026-07-16 实测):
+#   底盘 STM32: CH9102, idVendor=1a86 idProduct=55d4, serial=5761015331
+#   雷达 STL-19P: CP210x, idVendor=10c4 idProduct=ea60
+
+# 底盘 STM32 (CH9102) -> /dev/car_base
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1a86", ATTRS{idProduct}=="55d4", SYMLINK+="car_base", MODE="0666"
+
+# 激光雷达 STL-19P (CP210x) -> /dev/ldlidar
+SUBSYSTEM=="tty", ATTRS{idVendor}=="10c4", ATTRS{idProduct}=="ea60", SYMLINK+="ldlidar", MODE="0666"

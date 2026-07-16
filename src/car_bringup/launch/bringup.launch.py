@@ -43,8 +43,8 @@ def generate_launch_description():
         'use_lidar', default_value='true',
         description='是否启动激光雷达')
     declare_base_port = DeclareLaunchArgument(
-        'base_port', default_value='/dev/ttyACM0',
-        description='底盘串口设备')
+        'base_port', default_value='/dev/car_base',
+        description='底盘串口设备(udev 固定软链接)')
     declare_params = DeclareLaunchArgument(
         'params_file', default_value=default_params,
         description='car_base 参数文件')
