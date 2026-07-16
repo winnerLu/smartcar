@@ -1,0 +1,43 @@
+# ===== ROS2 / colcon 编译产物(架构相关 + 含绝对路径,绝不提交)=====
+build/
+install/
+log/
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+*.egg
+.pytest_cache/
+.mypy_cache/
+
+# ===== C/C++ 编译产物 =====
+*.o
+*.so
+*.a
+*.out
+
+# ===== 编辑器 / IDE =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.clangd/
+compile_commands.json
+
+# ===== 系统文件 =====
+.DS_Store
+Thumbs.db
+*:Zone.Identifier
+
+# ===== ROS 相关杂项 =====
+*.bag
+*.db3
+rosdep_cache/
+
+# ===== 本地环境 / 密钥(如有)=====
+.env
+*.local
