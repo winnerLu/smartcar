@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""smartcar 一键启动:底盘 car_base + 激光雷达 ldlidar。
+"""smartcar 一键启动:底盘 car_base + 激光雷达 ldlidar + 雷达外参 TF。
 
 前置(香橙派):需同时 source 两个工作空间,launch 才能找到 ldlidar 包:
     source ~/robot_ws/install/setup.bash
@@ -9,12 +9,18 @@
     ros2 launch car_bringup bringup.launch.py
     # 只启底盘,不启雷达:
     ros2 launch car_bringup bringup.launch.py use_lidar:=false
-    # 覆盖串口:
-    ros2 launch car_bringup bringup.launch.py base_port:=/dev/ttyACM0
+    # rviz 实测微调雷达朝向(改 yaw,单位弧度):
+    ros2 launch car_bringup bringup.launch.py laser_yaw:=-0.785
 
 启动后:
-    /wheel/odom  (car_base 里程计)  + TF odom->base_link
-    /scan        (雷达)            + TF base_link->base_laser
+    /wheel/odom (car_base 里程计) + TF odom->base_link
+    /scan       (雷达)           + TF base_link->base_laser(本 launch 发布)
+    /imu/data_raw (IMU)
+
+重要:base_link->base_laser 的 static TF 由本 launch 发布。
+     SDK 的 ld19.launch.py 内自带一个 static_transform_publisher(z=0.18 无旋转),
+     必须在香橙派上注释掉,否则与本 TF 冲突(两个源发同一变换)。
+     见 config/README 或部署说明。
 """
 
 import os
@@ -38,10 +44,14 @@ def generate_launch_description():
     base_port = LaunchConfiguration('base_port')
     params_file = LaunchConfiguration('params_file')
     lidar_launch = LaunchConfiguration('lidar_launch')
+    # 雷达相对 base_link 的外参(实测初值,rviz 可微调)
+    laser_x = LaunchConfiguration('laser_x')
+    laser_y = LaunchConfiguration('laser_y')
+    laser_z = LaunchConfiguration('laser_z')
+    laser_yaw = LaunchConfiguration('laser_yaw')
 
     declare_use_lidar = DeclareLaunchArgument(
-        'use_lidar', default_value='true',
-        description='是否启动激光雷达')
+        'use_lidar', default_value='true', description='是否启动激光雷达')
     declare_base_port = DeclareLaunchArgument(
         'base_port', default_value='/dev/car_base',
         description='底盘串口设备(udev 固定软链接)')
@@ -51,6 +61,11 @@ def generate_launch_description():
     declare_lidar_launch = DeclareLaunchArgument(
         'lidar_launch', default_value='ld19.launch.py',
         description='雷达 launch 文件名(ldlidar 包内)')
+    # 实测:前 16cm、右偏 1cm、离地 11.5cm、绕 Z 顺时针 45°(=-0.785 rad)
+    declare_laser_x = DeclareLaunchArgument('laser_x', default_value='0.16')
+    declare_laser_y = DeclareLaunchArgument('laser_y', default_value='-0.01')
+    declare_laser_z = DeclareLaunchArgument('laser_z', default_value='0.115')
+    declare_laser_yaw = DeclareLaunchArgument('laser_yaw', default_value='-0.785')
 
     # ---- 底盘节点 ----
     car_base_node = Node(
@@ -61,7 +76,20 @@ def generate_launch_description():
         parameters=[params_file, {'port': base_port}],
     )
 
-    # ---- 雷达(include ldlidar 包的 launch)----
+    # ---- 雷达外参 static TF: base_link -> base_laser ----
+    # static_transform_publisher 参数顺序: x y z yaw pitch roll parent child
+    laser_tf = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='base_link_to_base_laser',
+        arguments=[
+            laser_x, laser_y, laser_z,
+            laser_yaw, '0', '0',
+            'base_link', 'base_laser',
+        ],
+    )
+
+    # ---- 雷达节点(include SDK launch)----
     lidar_group = GroupAction(
         condition=IfCondition(use_lidar),
         actions=[
@@ -80,6 +108,11 @@ def generate_launch_description():
         declare_base_port,
         declare_params,
         declare_lidar_launch,
+        declare_laser_x,
+        declare_laser_y,
+        declare_laser_z,
+        declare_laser_yaw,
         car_base_node,
+        laser_tf,
         lidar_group,
     ])
