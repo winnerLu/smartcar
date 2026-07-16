@@ -74,6 +74,7 @@ class Feedback:
     voltage: float     # V
     # 原始计数,便于调试/标定
     raw_wz: int = 0
+    raw_frame: bytes = b''   # 原始 24 字节,便于 hex 调试
 
 
 def parse_feedback(frame: bytes) -> Feedback:
@@ -106,6 +107,7 @@ def parse_feedback(frame: bytes) -> Feedback:
               gz_c / GYRO_COUNT_PER_RADPS),
         voltage=voltage_mv / 1000.0,
         raw_wz=vz_raw,
+        raw_frame=bytes(frame),
     )
 
 

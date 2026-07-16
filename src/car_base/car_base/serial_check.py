@@ -109,7 +109,7 @@ def main():
                 for fb in reader.feed(data):
                     print(fmt_fb(fb))
                     if args.hex:
-                        pass
+                        print('  RX:', fb.raw_frame.hex(' '))
 
             # 每秒打印统计
             if (now - last_stat) >= 1.0:
