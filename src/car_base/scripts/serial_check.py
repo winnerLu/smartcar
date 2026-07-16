@@ -27,13 +27,10 @@ except ImportError:
     print('缺少 pyserial,请先: pip install pyserial', file=sys.stderr)
     sys.exit(1)
 
-# 允许作为脚本直接运行(补 import 路径)
-try:
-    from car_base.protocol import build_ctrl_frame, FrameReader, FB_FRAME_LEN
-except ImportError:
-    import os
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from car_base.protocol import build_ctrl_frame, FrameReader, FB_FRAME_LEN
+# protocol.py 与本脚本同目录
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from protocol import build_ctrl_frame, FrameReader, FB_FRAME_LEN
 
 
 def fmt_fb(fb):

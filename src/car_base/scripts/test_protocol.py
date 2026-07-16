@@ -7,7 +7,10 @@
 import struct
 import pytest
 
-from car_base.protocol import (
+import os
+import sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from protocol import (
     build_ctrl_frame, parse_feedback, bcc, FrameReader,
     FRAME_HEAD, FRAME_TAIL, CTRL_FRAME_LEN, FB_FRAME_LEN,
 )
