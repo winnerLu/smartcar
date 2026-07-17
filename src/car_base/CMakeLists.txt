@@ -34,6 +34,7 @@ install(DIRECTORY include/
 install(PROGRAMS
   scripts/serial_check.py
   scripts/keyboard_teleop.py
+  scripts/odom_monitor.py
   DESTINATION lib/${PROJECT_NAME})
 install(FILES
   scripts/protocol.py
