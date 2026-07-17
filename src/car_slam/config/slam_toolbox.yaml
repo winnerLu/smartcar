@@ -1,0 +1,59 @@
+slam_toolbox:
+  ros__parameters:
+    # ==== 坐标系(对接现有 TF)====
+    odom_frame: odom
+    map_frame: map
+    base_frame: base_link
+    scan_topic: /scan
+
+    # ==== 模式 ====
+    mode: mapping                # 建图模式(定位用 localization)
+
+    # ==== 在线异步建图 ====
+    # 用 async_slam_toolbox_node,处理不过来时丢帧而非阻塞,适合算力有限的香橙派
+    use_scan_matching: true
+    use_scan_barycenter: true
+    transform_publish_period: 0.02   # 发布 map->odom TF 的周期(s),50Hz
+    map_update_interval: 0.5         # 地图更新间隔(s),越小越实时越耗算力
+    resolution: 0.05                 # 栅格分辨率 5cm/格
+    max_laser_range: 12.0            # LD19 有效量程约12m,超出不用于建图
+    minimum_time_interval: 0.1       # 两次处理最小间隔(s)
+    transform_timeout: 0.2
+    tf_buffer_duration: 30.0
+    stack_size_to_use: 40000000
+
+    # ==== 里程计运动阈值:走够距离/转够角度才处理一帧,省算力 ====
+    minimum_travel_distance: 0.1     # 移动 10cm 触发一次(m)
+    minimum_travel_heading: 0.1      # 转 0.1rad(~5.7°)触发一次
+
+    # ==== 扫描匹配 ====
+    scan_buffer_size: 10
+    scan_buffer_maximum_scan_distance: 12.0
+    link_match_minimum_response_fine: 0.1
+    link_scan_maximum_distance: 1.5
+    loop_search_maximum_distance: 3.0
+    do_loop_closing: true            # 回环检测,回到起点附近纠正漂移
+    loop_match_minimum_chain_size: 10
+    loop_match_maximum_variance_coarse: 3.0
+    loop_match_minimum_response_coarse: 0.35
+    loop_match_minimum_response_fine: 0.45
+
+    # ==== 相关性扫描匹配参数 ====
+    correlation_search_space_dimension: 0.5
+    correlation_search_space_resolution: 0.01
+    correlation_search_space_smear_deviation: 0.1
+
+    # ==== 回环相关性参数 ====
+    loop_search_space_dimension: 8.0
+    loop_search_space_resolution: 0.05
+    loop_search_space_smear_deviation: 0.03
+
+    # ==== 扫描匹配惩罚项 ====
+    distance_variance_penalty: 0.5
+    angle_variance_penalty: 1.0
+    fine_search_angle_offset: 0.00349
+    coarse_search_angle_offset: 0.349
+    coarse_angle_resolution: 0.0349
+    minimum_angle_penalty: 0.9
+    minimum_distance_penalty: 0.5
+    use_response_expansion: true
