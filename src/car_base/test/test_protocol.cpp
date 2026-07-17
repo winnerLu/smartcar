@@ -38,31 +38,33 @@ TEST(Protocol, CtrlFrameStructure) {
   auto f = build_ctrl_frame(0.257, 0.0);
   EXPECT_EQ(f.size(), kCtrlFrameLen);
   EXPECT_EQ(f[0], kFrameHead);
+  EXPECT_EQ(f[1], 0x00);           // 预留位
+  EXPECT_EQ(f[2], 0x00);           // 预留位
   EXPECT_EQ(f[10], kFrameTail);
   EXPECT_EQ(f[9], bcc(f.data(), 9));
-  // 0.257 m/s -> 257 = 0x0101 大端
-  EXPECT_EQ(f[2], 0x01);
+  // 0.257 m/s -> 257 = 0x0101 大端,X 速度在字节 3-4
   EXPECT_EQ(f[3], 0x01);
+  EXPECT_EQ(f[4], 0x01);
 }
 
 TEST(Protocol, CtrlFrameNegative) {
   auto f = build_ctrl_frame(-0.257, 0.0);
-  EXPECT_EQ(read_be_i16(&f[2]), -257);
+  EXPECT_EQ(read_be_i16(&f[3]), -257);   // X 速度在字节 3-4
 }
 
 TEST(Protocol, CtrlWzSign) {
   auto fp = build_ctrl_frame(0.0, 0.5, 1);
   auto fn = build_ctrl_frame(0.0, 0.5, -1);
-  EXPECT_EQ(read_be_i16(&fp[6]), 500);
-  EXPECT_EQ(read_be_i16(&fn[6]), -500);
+  EXPECT_EQ(read_be_i16(&fp[7]), 500);   // Z 角速度在字节 7-8
+  EXPECT_EQ(read_be_i16(&fn[7]), -500);
 }
 
 TEST(Protocol, CtrlVxSign) {
-  // 第4个参数 cmd_vx_sign:-1 应把正 vx 编码成负值
+  // 第4个参数 cmd_vx_sign:-1 应把正 vx 编码成负值(X 速度字节 3-4)
   auto fp = build_ctrl_frame(0.2, 0.0, 1, 1);
   auto fn = build_ctrl_frame(0.2, 0.0, 1, -1);
-  EXPECT_EQ(read_be_i16(&fp[2]), 200);
-  EXPECT_EQ(read_be_i16(&fn[2]), -200);
+  EXPECT_EQ(read_be_i16(&fp[3]), 200);
+  EXPECT_EQ(read_be_i16(&fn[3]), -200);
 }
 
 TEST(Protocol, ParseFeedbackDocExample) {

@@ -64,21 +64,22 @@ inline void write_be_i16(uint8_t * p, int32_t v)
   p[1] = static_cast<uint8_t>(u & 0xFF);
 }
 
-// 构造 11 字节控制帧。
-//   vx: 线速度 m/s;  wz: 角速度 rad/s;
+// 构造 11 字节控制帧(手册表 6-1):
+//   [0]帧头 [1][2]预留位 [3-4]X速度 [5-6]Y速度 [7-8]Z角速度 [9]校验 [10]帧尾
+//   多字节大端,短整型 = 物理量×1000。差速车 Y 恒 0。
 //   cmd_vx_sign / cmd_wz_sign: 符号参数(实测确定,底盘正方向与 ROS 约定可能相反)。
 inline std::array<uint8_t, kCtrlFrameLen> build_ctrl_frame(
   double vx, double wz, int cmd_wz_sign = 1, int cmd_vx_sign = 1,
-  uint8_t flag_stop = 0, uint8_t reserved = 0)
+  uint8_t reserved1 = 0, uint8_t reserved2 = 0)
 {
   std::array<uint8_t, kCtrlFrameLen> f{};
   f[0] = kFrameHead;
-  f[1] = flag_stop;
-  write_be_i16(&f[2], static_cast<int32_t>(cmd_vx_sign * vx * 1000.0));  // X 速度
-  write_be_i16(&f[4], 0);                                        // Y 速度(差速车恒 0)
-  write_be_i16(&f[6], static_cast<int32_t>(cmd_wz_sign * wz * 1000.0));  // Z 角速度
-  f[8] = reserved;
-  f[9] = bcc(f.data(), 9);        // 字节 1..9
+  f[1] = reserved1;                                              // 预留位
+  f[2] = reserved2;                                              // 预留位
+  write_be_i16(&f[3], static_cast<int32_t>(cmd_vx_sign * vx * 1000.0));  // X 速度
+  write_be_i16(&f[5], 0);                                        // Y 速度(差速车恒 0)
+  write_be_i16(&f[7], static_cast<int32_t>(cmd_wz_sign * wz * 1000.0));  // Z 角速度
+  f[9] = bcc(f.data(), 9);        // 字节 1..9 异或
   f[10] = kFrameTail;
   return f;
 }
