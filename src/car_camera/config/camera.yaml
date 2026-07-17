@@ -1,0 +1,13 @@
+# car_camera 节点参数(罗技 C270)
+# launch 中节点 name='camera',故顶层 key 为 camera:
+camera:
+  ros__parameters:
+    # udev 固定软链接(见 car_bringup/config/99-smartcar.rules),不受 videoN 编号漂移影响
+    video_device: /dev/camera_c270
+    frame_id: camera_link
+    image_width: 640
+    image_height: 480
+    framerate: 30
+    # C270 高帧率靠 MJPG;YUYV 在高分辨率下 USB2 带宽不足会掉帧
+    pixel_format: mjpg
+    camera_name: logitech_c270
