@@ -5,8 +5,9 @@ car_base:
     baud: 115200
     # 速度符号(实测):cmd_vel 正 linear.x 却后退,故 cmd_vx_sign 翻转为 -1
     cmd_vx_sign: -1
-    cmd_wz_sign: 1
-    # 里程计符号:需实测确认(车实际前进时反馈 vx 应为正)
+    # 转向:遥控 a(正 wz)实车右转,方向反,cmd_wz_sign 翻转为 -1(待实车复验)
+    cmd_wz_sign: -1
+    # 里程计符号:需实测确认(前进 vx 为正、左转 wz 为正)
     odom_vx_sign: 1
     odom_wz_sign: 1
     # 幅值标定(待精调,先用 1.0;反馈角速度实测约 3 倍需后续标定)

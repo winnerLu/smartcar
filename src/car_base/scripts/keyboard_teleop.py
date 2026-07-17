@@ -48,12 +48,12 @@ HELP = """
 class KeyboardTeleop(Node):
     def __init__(self):
         super().__init__('keyboard_teleop')
-        self.linear_speed = self.declare_parameter('linear_speed', 0.15).value
-        self.angular_speed = self.declare_parameter('angular_speed', 0.5).value
+        self.linear_speed = self.declare_parameter('linear_speed', 0.10).value
+        self.angular_speed = self.declare_parameter('angular_speed', 0.4).value
         self.max_linear = self.declare_parameter('max_linear', 0.4).value
         self.max_angular = self.declare_parameter('max_angular', 1.5).value
         self.step = self.declare_parameter('step', 0.05).value
-        self.release_timeout = self.declare_parameter('release_timeout', 1.0).value
+        self.release_timeout = self.declare_parameter('release_timeout', 0.4).value
 
         self.pub = self.create_publisher(Twist, 'cmd_vel', 10)
         self.vx = 0.0
@@ -81,7 +81,7 @@ class KeyboardTeleop(Node):
         elif key in ('s', 'S'):
             self.vx = -self.linear_speed
             self.last_move_key_time = mono
-        elif key in ('a', 'A'):          # 左转 = 逆时针 = angular.z 正(REP-103)
+        elif key in ('a', 'A'):          # 左转 = 逆时针 = angular.z 正(REP-103 标准)
             self.wz = self.angular_speed
             self.last_move_key_time = mono
         elif key in ('d', 'D'):          # 右转 = 顺时针 = angular.z 负
