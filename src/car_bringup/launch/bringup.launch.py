@@ -61,11 +61,13 @@ def generate_launch_description():
     declare_lidar_launch = DeclareLaunchArgument(
         'lidar_launch', default_value='ld19.launch.py',
         description='雷达 launch 文件名(ldlidar 包内)')
-    # 实测:前 16cm、右偏 1cm、离地 11.5cm、绕 Z 顺时针 45°(=-0.785 rad)
+    # 实测标定:前 16cm、右偏 1cm、离地 11.5cm。
+    # yaw=4.10rad(~235°):Foxglove 实测对齐值,含雷达上壳装错 180° 的补偿
+    # (若上壳物理转正 180°,应改回约 0.96rad)。laser_scan_dir=True 无镜像。
     declare_laser_x = DeclareLaunchArgument('laser_x', default_value='0.16')
     declare_laser_y = DeclareLaunchArgument('laser_y', default_value='-0.01')
     declare_laser_z = DeclareLaunchArgument('laser_z', default_value='0.115')
-    declare_laser_yaw = DeclareLaunchArgument('laser_yaw', default_value='-0.785')
+    declare_laser_yaw = DeclareLaunchArgument('laser_yaw', default_value='4.10')
 
     # ---- 底盘节点 ----
     car_base_node = Node(
