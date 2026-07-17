@@ -30,9 +30,10 @@ install(TARGETS car_base_node
 install(DIRECTORY include/
   DESTINATION include)
 
-# ---- Python 验证脚本(独立调试工具)----
+# ---- Python 脚本(验证工具 + 键盘遥控)----
 install(PROGRAMS
   scripts/serial_check.py
+  scripts/keyboard_teleop.py
   DESTINATION lib/${PROJECT_NAME})
 install(FILES
   scripts/protocol.py

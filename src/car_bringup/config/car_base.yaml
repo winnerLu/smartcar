@@ -15,6 +15,9 @@ car_base:
     voltage_scale: 1.0
     # 超时保护:200ms 无 cmd_vel 自动停车
     cmd_timeout_ms: 200
+    # 速度硬上限(兜底防溢出/危险速度)
+    max_vx: 0.5
+    max_wz: 2.0
     # IMU 已装并验证通过,发布 /imu/data_raw
     publish_imu: true
     # 坐标系

@@ -12,6 +12,7 @@
 //   - 200ms 未收到 /cmd_vel 则自动下发零速(超时保护)。
 //   - 角速度符号/幅值、电压均可通过参数标定(见标定记录)。
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <memory>
@@ -52,6 +53,8 @@ public:
     odom_vx_scale_ = declare_parameter<double>("odom_vx_scale", 1.0);  // 待标定
     voltage_scale_ = declare_parameter<double>("voltage_scale", 1.0);  // 待标定
     cmd_timeout_ms_ = declare_parameter<int>("cmd_timeout_ms", 200);
+    max_vx_ = declare_parameter<double>("max_vx", 0.5);   // 线速度硬上限,防溢出/危险速度
+    max_wz_ = declare_parameter<double>("max_wz", 2.0);   // 角速度硬上限
     publish_imu_ = declare_parameter<bool>("publish_imu", false);     // IMU 未到货,默认关
     odom_frame_ = declare_parameter<std::string>("odom_frame", "odom");
     base_frame_ = declare_parameter<std::string>("base_frame", "base_link");
@@ -113,6 +116,9 @@ private:
       vx = target_vx_;
       wz = target_wz_;
     }
+    // 限幅:兜底防止过大速度(误操作/Nav2 异常)导致 STM32 内部溢出或危险运动
+    vx = std::clamp(vx, -max_vx_, max_vx_);
+    wz = std::clamp(wz, -max_wz_, max_wz_);
     auto frame = build_ctrl_frame(vx, wz, cmd_wz_sign_, cmd_vx_sign_);
     if (!serial_.write_all(frame.data(), frame.size())) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "串口写失败");
@@ -219,6 +225,7 @@ private:
   // 参数
   std::string device_, odom_frame_, base_frame_;
   int baud_, cmd_vx_sign_, cmd_wz_sign_, odom_vx_sign_, odom_wz_sign_, cmd_timeout_ms_;
+  double max_vx_, max_wz_;
   double odom_wz_scale_, odom_vx_scale_, voltage_scale_;
   bool publish_imu_, publish_tf_;
 
