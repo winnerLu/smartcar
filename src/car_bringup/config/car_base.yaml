@@ -3,8 +3,11 @@ car_base:
   ros__parameters:
     port: /dev/car_base   # udev 固定软链接(见 99-smartcar.rules),不受 ttyACM 编号漂移影响
     baud: 115200
-    # 角速度符号(实测)
+    # 速度符号(实测):cmd_vel 正 linear.x 却后退,故 cmd_vx_sign 翻转为 -1
+    cmd_vx_sign: -1
     cmd_wz_sign: 1
+    # 里程计符号:需实测确认(车实际前进时反馈 vx 应为正)
+    odom_vx_sign: 1
     odom_wz_sign: 1
     # 幅值标定(待精调,先用 1.0;反馈角速度实测约 3 倍需后续标定)
     odom_wz_scale: 1.0

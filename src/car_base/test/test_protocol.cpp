@@ -57,6 +57,14 @@ TEST(Protocol, CtrlWzSign) {
   EXPECT_EQ(read_be_i16(&fn[6]), -500);
 }
 
+TEST(Protocol, CtrlVxSign) {
+  // 第4个参数 cmd_vx_sign:-1 应把正 vx 编码成负值
+  auto fp = build_ctrl_frame(0.2, 0.0, 1, 1);
+  auto fn = build_ctrl_frame(0.2, 0.0, 1, -1);
+  EXPECT_EQ(read_be_i16(&fp[2]), 200);
+  EXPECT_EQ(read_be_i16(&fn[2]), -200);
+}
+
 TEST(Protocol, ParseFeedbackDocExample) {
   // X 速度 0x0101=257 -> 0.257 m/s;Z 加速度 0x4080=16512 -> /1672=9.8756;
   // 电池 0x5838=22584 mV

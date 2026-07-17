@@ -44,7 +44,9 @@ public:
     // ---- 参数 ----
     device_ = declare_parameter<std::string>("port", "/dev/ttyACM0");
     baud_ = declare_parameter<int>("baud", 115200);
+    cmd_vx_sign_ = declare_parameter<int>("cmd_vx_sign", 1);      // 线速度控制符号(实测)
     cmd_wz_sign_ = declare_parameter<int>("cmd_wz_sign", 1);      // 实测 +1
+    odom_vx_sign_ = declare_parameter<int>("odom_vx_sign", 1);    // 里程计线速度符号(实测)
     odom_wz_sign_ = declare_parameter<int>("odom_wz_sign", 1);    // 实测 +1
     odom_wz_scale_ = declare_parameter<double>("odom_wz_scale", 1.0);  // 待标定(反馈约 3 倍)
     odom_vx_scale_ = declare_parameter<double>("odom_vx_scale", 1.0);  // 待标定
@@ -111,7 +113,7 @@ private:
       vx = target_vx_;
       wz = target_wz_;
     }
-    auto frame = build_ctrl_frame(vx, wz, cmd_wz_sign_);
+    auto frame = build_ctrl_frame(vx, wz, cmd_wz_sign_, cmd_vx_sign_);
     if (!serial_.write_all(frame.data(), frame.size())) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "串口写失败");
     }
@@ -138,7 +140,7 @@ private:
       return;
     }
 
-    const double vx = fb.vx * odom_vx_scale_;
+    const double vx = odom_vx_sign_ * fb.vx * odom_vx_scale_;
     const double wz = odom_wz_sign_ * fb.wz * odom_wz_scale_;
 
     // 差速里程计积分(2D)
@@ -216,7 +218,7 @@ private:
 
   // 参数
   std::string device_, odom_frame_, base_frame_;
-  int baud_, cmd_wz_sign_, odom_wz_sign_, cmd_timeout_ms_;
+  int baud_, cmd_vx_sign_, cmd_wz_sign_, odom_vx_sign_, odom_wz_sign_, cmd_timeout_ms_;
   double odom_wz_scale_, odom_vx_scale_, voltage_scale_;
   bool publish_imu_, publish_tf_;
 

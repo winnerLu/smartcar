@@ -65,15 +65,16 @@ inline void write_be_i16(uint8_t * p, int32_t v)
 }
 
 // 构造 11 字节控制帧。
-//   vx: 线速度 m/s;  wz: 角速度 rad/s;  cmd_wz_sign: 角速度符号参数。
+//   vx: 线速度 m/s;  wz: 角速度 rad/s;
+//   cmd_vx_sign / cmd_wz_sign: 符号参数(实测确定,底盘正方向与 ROS 约定可能相反)。
 inline std::array<uint8_t, kCtrlFrameLen> build_ctrl_frame(
-  double vx, double wz, int cmd_wz_sign = 1,
+  double vx, double wz, int cmd_wz_sign = 1, int cmd_vx_sign = 1,
   uint8_t flag_stop = 0, uint8_t reserved = 0)
 {
   std::array<uint8_t, kCtrlFrameLen> f{};
   f[0] = kFrameHead;
   f[1] = flag_stop;
-  write_be_i16(&f[2], static_cast<int32_t>(vx * 1000.0));        // X 速度
+  write_be_i16(&f[2], static_cast<int32_t>(cmd_vx_sign * vx * 1000.0));  // X 速度
   write_be_i16(&f[4], 0);                                        // Y 速度(差速车恒 0)
   write_be_i16(&f[6], static_cast<int32_t>(cmd_wz_sign * wz * 1000.0));  // Z 角速度
   f[8] = reserved;
