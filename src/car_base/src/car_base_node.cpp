@@ -55,6 +55,7 @@ public:
     cmd_timeout_ms_ = declare_parameter<int>("cmd_timeout_ms", 200);
     max_vx_ = declare_parameter<double>("max_vx", 0.5);   // 线速度硬上限,防溢出/危险速度
     max_wz_ = declare_parameter<double>("max_wz", 2.0);   // 角速度硬上限
+    debug_tx_ = declare_parameter<bool>("debug_tx", false);  // 打印发送帧十六进制
     publish_imu_ = declare_parameter<bool>("publish_imu", false);     // IMU 未到货,默认关
     odom_frame_ = declare_parameter<std::string>("odom_frame", "odom");
     base_frame_ = declare_parameter<std::string>("base_frame", "base_link");
@@ -120,6 +121,14 @@ private:
     vx = std::clamp(vx, -max_vx_, max_vx_);
     wz = std::clamp(wz, -max_wz_, max_wz_);
     auto frame = build_ctrl_frame(vx, wz, cmd_wz_sign_, cmd_vx_sign_);
+    if (debug_tx_ && (vx != 0.0 || wz != 0.0)) {
+      char hex[64];
+      int p = 0;
+      for (size_t i = 0; i < frame.size(); ++i) {
+        p += snprintf(hex + p, sizeof(hex) - p, "%02X ", frame[i]);
+      }
+      RCLCPP_INFO(get_logger(), "TX vx=%.3f wz=%.3f -> %s", vx, wz, hex);
+    }
     if (!serial_.write_all(frame.data(), frame.size())) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "串口写失败");
     }
@@ -226,6 +235,7 @@ private:
   std::string device_, odom_frame_, base_frame_;
   int baud_, cmd_vx_sign_, cmd_wz_sign_, odom_vx_sign_, odom_wz_sign_, cmd_timeout_ms_;
   double max_vx_, max_wz_;
+  bool debug_tx_;
   double odom_wz_scale_, odom_vx_scale_, voltage_scale_;
   bool publish_imu_, publish_tf_;
 
