@@ -1,0 +1,221 @@
+# Nav2 参数(第一版:静态图 + AMCL 定位 + NavFn 全局 + DWB 局部)
+# 车体:两轮差速,约 20cm(宽) x 25cm(长),低速。
+# frame:map / odom / base_link / base_laser,scan 话题 /scan(10Hz)。
+# 注:第一版 Nav2 直接发 /cmd_vel 给 car_base;后续插入 twist_mux 改为 /cmd_vel_safe。
+
+# ==================== AMCL 定位(静态图模式)====================
+amcl:
+  ros__parameters:
+    use_sim_time: false
+    base_frame_id: base_link
+    odom_frame_id: odom
+    global_frame_id: map
+    scan_topic: scan
+    # 差速运动模型
+    robot_model_type: "nav2_amcl::DifferentialMotionModel"
+    min_particles: 500
+    max_particles: 2000
+    # 里程计噪声(差速:alpha1 转->转, alpha2 平移->转, alpha3 平移->平移, alpha4 转->平移)
+    alpha1: 0.2
+    alpha2: 0.2
+    alpha3: 0.2
+    alpha4: 0.2
+    # 激光模型
+    laser_model_type: "likelihood_field"
+    laser_max_range: 12.0        # STL-19P 有效量程
+    laser_min_range: 0.1
+    max_beams: 60
+    # 触发更新的运动阈值
+    update_min_d: 0.2            # 移动 0.2m 更新
+    update_min_a: 0.2            # 转 0.2rad 更新
+    resample_interval: 1
+    transform_tolerance: 0.5
+    do_beamskip: false
+    tf_broadcast: true           # AMCL 发布 map->odom
+
+# ==================== 全局规划器 NavFn ====================
+planner_server:
+  ros__parameters:
+    use_sim_time: false
+    expected_planner_frequency: 5.0
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_navfn_planner/NavfnPlanner"
+      tolerance: 0.25            # 到不了精确目标时允许的误差(m)
+      use_astar: false           # false=Dijkstra
+      allow_unknown: true        # 允许穿越未知区域(探索时有用)
+
+# ==================== 局部控制器 DWB ====================
+controller_server:
+  ros__parameters:
+    use_sim_time: false
+    controller_frequency: 10.0
+    min_x_velocity_threshold: 0.001
+    min_theta_velocity_threshold: 0.001
+    # 到点判定
+    goal_checker_plugins: ["goal_checker"]
+    controller_plugins: ["FollowPath"]
+    progress_checker_plugins: ["progress_checker"]
+
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.5
+      movement_time_allowance: 15.0
+
+    goal_checker:
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.15    # 到点位置容差(m)
+      yaw_goal_tolerance: 0.20   # 到点航向容差(rad)
+      stateful: true
+
+    FollowPath:
+      plugin: "dwb_core::DWBLocalPlanner"
+      debug_trajectory_details: true
+      # 速度限制(差速:x 前进 + z 转向,y 恒 0)
+      min_vel_x: 0.0             # 无后向传感器,禁止倒车
+      max_vel_x: 0.22
+      min_vel_y: 0.0
+      max_vel_y: 0.0
+      max_vel_theta: 1.0
+      min_speed_xy: 0.0
+      max_speed_xy: 0.22
+      min_speed_theta: 0.0
+      # 加速度限制
+      acc_lim_x: 1.0
+      acc_lim_y: 0.0
+      acc_lim_theta: 2.0
+      decel_lim_x: -1.0
+      decel_lim_y: 0.0
+      decel_lim_theta: -2.0
+      # 轨迹采样
+      vx_samples: 20
+      vy_samples: 0
+      vtheta_samples: 20
+      sim_time: 1.5
+      linear_granularity: 0.05
+      angular_granularity: 0.025
+      transform_tolerance: 0.2
+      # 评价插件
+      critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign",
+                "PathAlign", "PathDist", "GoalDist"]
+      BaseObstacle.scale: 0.02
+      PathAlign.scale: 32.0
+      PathAlign.forward_point_distance: 0.1
+      GoalAlign.scale: 24.0
+      GoalAlign.forward_point_distance: 0.1
+      PathDist.scale: 32.0
+      GoalDist.scale: 24.0
+      RotateToGoal.scale: 32.0
+      RotateToGoal.slowing_factor: 5.0
+      RotateToGoal.lookahead_time: -1.0
+
+# ==================== 全局代价地图 ====================
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      use_sim_time: false
+      global_frame: map
+      robot_base_frame: base_link
+      update_frequency: 1.0
+      publish_frequency: 1.0
+      resolution: 0.05
+      track_unknown_space: true
+      # 车体轮廓(矩形,单位 m。前后 ±0.125=车长25cm,左右 ±0.10=车宽20cm)
+      footprint: "[[0.125, 0.10], [0.125, -0.10], [-0.125, -0.10], [-0.125, 0.10]]"
+      footprint_padding: 0.02
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: true
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 2.0
+          clearing: true
+          marking: true
+          data_type: "LaserScan"
+          raytrace_max_range: 12.0
+          obstacle_max_range: 10.0
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.25    # 障碍膨胀半径(m),窄道通不过时调小
+
+# ==================== 局部代价地图 ====================
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      use_sim_time: false
+      global_frame: odom
+      robot_base_frame: base_link
+      update_frequency: 5.0
+      publish_frequency: 5.0
+      rolling_window: true       # 跟随小车滚动的窗口
+      width: 3
+      height: 3
+      resolution: 0.05
+      footprint: "[[0.125, 0.10], [0.125, -0.10], [-0.125, -0.10], [-0.125, 0.10]]"
+      footprint_padding: 0.02
+      plugins: ["obstacle_layer", "inflation_layer"]
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 2.0
+          clearing: true
+          marking: true
+          data_type: "LaserScan"
+          raytrace_max_range: 12.0
+          obstacle_max_range: 10.0
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.25
+
+# ==================== 行为树导航器 ====================
+bt_navigator:
+  ros__parameters:
+    use_sim_time: false
+    global_frame: map
+    robot_base_frame: base_link
+    odom_topic: /odometry/filtered
+    bt_loop_duration: 10
+    default_server_timeout: 20
+
+# ==================== 恢复行为 ====================
+behavior_server:
+  ros__parameters:
+    use_sim_time: false
+    local_costmap_topic: local_costmap/costmap_raw
+    global_costmap_topic: global_costmap/costmap_raw
+    local_frame: odom
+    global_frame: map
+    robot_base_frame: base_link
+    behavior_plugins: ["spin", "backup", "wait"]
+    spin:
+      plugin: "nav2_behaviors/Spin"
+    backup:
+      plugin: "nav2_behaviors/BackUp"
+    wait:
+      plugin: "nav2_behaviors/Wait"
+    # 无后向传感器,不用 backup 恢复(或限制极小)
+    simulate_ahead_time: 2.0
+
+# ==================== 速度平滑(可选,先留)====================
+velocity_smoother:
+  ros__parameters:
+    use_sim_time: false
+    smoothing_frequency: 20.0
+    scale_velocities: false
+    feedback: "OPEN_LOOP"
+    max_velocity: [0.22, 0.0, 1.0]
+    min_velocity: [0.0, 0.0, -1.0]
+    max_accel: [1.0, 0.0, 2.0]
+    max_decel: [-1.0, 0.0, -2.0]
+    odom_topic: "odometry/filtered"
+    odom_duration: 0.1
