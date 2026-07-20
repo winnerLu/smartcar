@@ -89,6 +89,61 @@ ros2 run car_base car_base_node --ros-args \
 ros2 run car_base keyboard_teleop.py --ros-args -p linear_speed:=0.08
 ```
 
+## SLAM 建图(边走边建)
+
+三/四个终端:
+```bash
+# 终端1: 硬件
+ros2 launch car_bringup bringup.launch.py
+# 终端2: 建图(slam_toolbox)
+ros2 launch car_slam slam.launch.py
+# 终端3: 遥控(慢速平稳,走回环,别急转)
+ros2 run car_base keyboard_teleop.py     # 若 ros2 run 找不到,用: python3 install/car_base/lib/car_base/keyboard_teleop.py
+# 终端4: 可视化
+ros2 run foxglove_bridge foxglove_bridge
+```
+Foxglove: Fixed frame=map,开 /map /scan /tf。建图要慢、走回环,否则地图会旋转错位。
+
+存图(slam 运行时任意时刻):
+```bash
+ros2 run nav2_map_server map_saver_cli -f ~/robot_ws/maps/图名
+```
+
+> 注意:建图(slam.launch.py)和导航(navigation.launch.py)不能同时开,都发 map->odom 会冲突。
+
+## Nav2 静态图导航
+
+```bash
+# 终端1: 硬件
+ros2 launch car_bringup bringup.launch.py
+# 终端2: 导航(必须 map:= 指定实际地图绝对路径)
+ros2 launch car_navigation navigation.launch.py map:=/home/orangepi/robot_ws/maps/图名.yaml
+# 终端3: 可视化
+ros2 run foxglove_bridge foxglove_bridge
+```
+
+**发初始位姿(关键!必须带 --qos-reliability reliable,否则 AMCL 收不到)。**
+车放建图起点、朝向 map +X(0°):
+```bash
+ros2 topic pub -1 /initialpose geometry_msgs/msg/PoseWithCovarianceStamped '{header: {frame_id: "map"}, pose: {pose: {position: {x: 0.0, y: 0.0, z: 0.0}, orientation: {x: 0.0, y: 0.0, z: 0.0, w: 1.0}}, covariance: [0.25,0,0,0,0,0, 0,0.25,0,0,0,0, 0,0,0,0,0,0, 0,0,0,0,0,0, 0,0,0,0,0,0, 0,0,0,0,0,0.068]}}' --qos-reliability reliable
+```
+朝向 45° 则 orientation 用 `{z: 0.3827, w: 0.9239}`;90° 用 `{z: 0.707, w: 0.707}`。
+
+验证定位:
+```bash
+ros2 run tf2_ros tf2_echo map odom     # 有输出=map->odom通了
+```
+Foxglove 看 /scan 点云和 /map 墙重合=定位准 → 用 RViz/Foxglove "2D Nav Goal" 点目标导航。
+
+**导航注意**:别开 keyboard_teleop(抢 /cmd_vel);留足空间准备急停;窄道规划不出路径多为 inflation_radius(0.25) 偏大,实测再调。
+
+## 常见坑
+
+- AMCL 初始位姿:必须 `--qos-reliability reliable`,普通 pub 显示发了但 AMCL 收不到。
+- map_server 报 `yaml_filename is not initialized`:nav2_params.yaml 需有 map_server 段(已修)。
+- 雷达 `communication is abnormal` 秒退:供电不足,换香橙派供电足的 USB 口。
+- 设备名漂移:用 udev 固定名 /dev/car_base、/dev/ldlidar(已配)。
+
 ## 手动 source(若新终端找不到包)
 
 ```bash
