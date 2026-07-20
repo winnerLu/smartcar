@@ -30,7 +30,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, GroupAction
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
@@ -49,9 +49,16 @@ def generate_launch_description():
     laser_y = LaunchConfiguration('laser_y')
     laser_z = LaunchConfiguration('laser_z')
     laser_yaw = LaunchConfiguration('laser_yaw')
+    use_safety = LaunchConfiguration('use_safety')
+    # car_base 订阅话题:use_safety=true 时自动用 cmd_vel_safe,否则 cmd_vel
+    cmd_vel_topic = PythonExpression(
+        ["'cmd_vel_safe' if '", use_safety, "' == 'true' else 'cmd_vel'"])
 
     declare_use_lidar = DeclareLaunchArgument(
         'use_lidar', default_value='true', description='是否启动激光雷达')
+    declare_use_safety = DeclareLaunchArgument(
+        'use_safety', default_value='false',
+        description='启用安全链(twist_mux+collision_monitor);启用时 car_base 自动订阅 cmd_vel_safe')
     declare_base_port = DeclareLaunchArgument(
         'base_port', default_value='/dev/car_base',
         description='底盘串口设备(udev 固定软链接)')
@@ -70,12 +77,27 @@ def generate_launch_description():
     declare_laser_yaw = DeclareLaunchArgument('laser_yaw', default_value='4.10')
 
     # ---- 底盘节点 ----
+    # 安全链开启时订阅 cmd_vel_safe,否则 cmd_vel(用 cmd_vel_topic 参数,默认随场景)
     car_base_node = Node(
         package='car_base',
         executable='car_base_node',
         name='car_base',
         output='screen',
-        parameters=[params_file, {'port': base_port}],
+        parameters=[params_file, {'port': base_port, 'cmd_vel_topic': cmd_vel_topic}],
+    )
+
+    # ---- 安全链(twist_mux + collision_monitor),use_safety:=true 时启动 ----
+    safety_group = GroupAction(
+        condition=IfCondition(use_safety),
+        actions=[
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource([
+                    PathJoinSubstitution([
+                        FindPackageShare('car_navigation'), 'launch', 'safety.launch.py',
+                    ]),
+                ]),
+            ),
+        ],
     )
 
     # ---- 雷达外参 static TF: base_link -> base_laser ----
@@ -107,6 +129,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         declare_use_lidar,
+        declare_use_safety,
         declare_base_port,
         declare_params,
         declare_lidar_launch,
@@ -117,4 +140,5 @@ def generate_launch_description():
         car_base_node,
         laser_tf,
         lidar_group,
+        safety_group,
     ])
