@@ -3,6 +3,13 @@
 # frame:map / odom / base_link / base_laser,scan 话题 /scan(10Hz)。
 # 注:第一版 Nav2 直接发 /cmd_vel 给 car_base;后续插入 twist_mux 改为 /cmd_vel_safe。
 
+# ==================== 地图服务 ====================
+# yaml_filename 会被 navigation.launch.py 的 map:= 参数覆盖(nav2_bringup RewrittenYaml)
+map_server:
+  ros__parameters:
+    use_sim_time: false
+    yaml_filename: ""
+
 # ==================== AMCL 定位(静态图模式)====================
 amcl:
   ros__parameters:
