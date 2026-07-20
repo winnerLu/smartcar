@@ -120,8 +120,9 @@ global_costmap:
       publish_frequency: 1.0
       resolution: 0.05
       track_unknown_space: true
-      # 车体轮廓(矩形,单位 m。前后 ±0.125=车长25cm,左右 ±0.10=车宽20cm)
-      footprint: "[[0.125, 0.10], [0.125, -0.10], [-0.125, -0.10], [-0.125, 0.10]]"
+      # 车体轮廓(实测,base_link=两轮中点。轮子在车尾:前19.7cm/后3.3cm,左右各9.3cm。
+      # 不对称:车几乎全在轮轴前方)
+      footprint: "[[0.197, 0.093], [0.197, -0.093], [-0.033, -0.093], [-0.033, 0.093]]"
       footprint_padding: 0.02
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       static_layer:
@@ -157,7 +158,7 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.05
-      footprint: "[[0.125, 0.10], [0.125, -0.10], [-0.125, -0.10], [-0.125, 0.10]]"
+      footprint: "[[0.197, 0.093], [0.197, -0.093], [-0.033, -0.093], [-0.033, 0.093]]"
       footprint_padding: 0.02
       plugins: ["obstacle_layer", "inflation_layer"]
       obstacle_layer:
