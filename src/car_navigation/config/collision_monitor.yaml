@@ -24,8 +24,8 @@ collision_monitor:
       min_points: 4
       visualize: true
       polygon_pub_topic: "slow_zone"
-      # 车前方一个矩形区(相对 base_link,车头在 +x)。车头到中心19.7cm,再向前留检测距
-      points: "[[0.40, 0.20], [0.40, -0.20], [-0.05, -0.20], [-0.05, 0.20]]"
+      # 车前方矩形区(相对 base_link,车头在 +x)。扁平数组 [x1,y1, x2,y2, ...]
+      points: [0.40, 0.20, 0.40, -0.20, -0.05, -0.20, -0.05, 0.20]
     # 停止区:检测到障碍立即停
     stop_zone:
       type: "polygon"
@@ -34,7 +34,7 @@ collision_monitor:
       visualize: true
       polygon_pub_topic: "stop_zone"
       # 更贴近车体的区,进入即停(车头19.7cm + 约6cm安全距)
-      points: "[[0.26, 0.14], [0.26, -0.14], [-0.05, -0.14], [-0.05, 0.14]]"
+      points: [0.26, 0.14, 0.26, -0.14, -0.05, -0.14, -0.05, 0.14]
     # 观测源:激光雷达
     observation_sources: ["scan"]
     scan:
