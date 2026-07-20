@@ -1,0 +1,45 @@
+# Nav2 Collision Monitor:碰撞监控,快撞障碍时主动减速/停车。
+# 输入 cmd_vel_in(twist_mux 输出的 /cmd_vel_raw),输出 cmd_vel_out(/cmd_vel 给 car_base)。
+# 用 /scan 判断车周围障碍,分两级:接近->减速,很近->停车。
+# 这是雷达能扫到的障碍的软件防撞兜底(雷达扫不到的低矮/透明障碍仍需后续硬件方案)。
+collision_monitor:
+  ros__parameters:
+    use_sim_time: false
+    base_frame_id: "base_link"
+    odom_frame_id: "odom"
+    cmd_vel_in_topic: "cmd_vel_raw"      # twist_mux 输出
+    cmd_vel_out_topic: "cmd_vel_safe"    # 给 car_base(car_base 需设 cmd_vel_topic:=cmd_vel_safe)
+    state_topic: "collision_monitor_state"
+    transform_tolerance: 0.2
+    source_timeout: 1.0
+    base_shift_correction: true
+    stop_pub_timeout: 2.0
+    # 两级防护区(polygon)
+    polygons: ["slow_zone", "stop_zone"]
+    # 减速区:检测到障碍则降速到 slowdown_ratio
+    slow_zone:
+      type: "polygon"
+      action_type: "slowdown"
+      slowdown_ratio: 0.3               # 降到 30% 速度
+      min_points: 4
+      visualize: true
+      polygon_pub_topic: "slow_zone"
+      # 车前方一个矩形区(相对 base_link,车头在 +x)。车头到中心19.7cm,再向前留检测距
+      points: "[[0.40, 0.20], [0.40, -0.20], [-0.05, -0.20], [-0.05, 0.20]]"
+    # 停止区:检测到障碍立即停
+    stop_zone:
+      type: "polygon"
+      action_type: "stop"
+      min_points: 4
+      visualize: true
+      polygon_pub_topic: "stop_zone"
+      # 更贴近车体的区,进入即停(车头19.7cm + 约6cm安全距)
+      points: "[[0.26, 0.14], [0.26, -0.14], [-0.05, -0.14], [-0.05, 0.14]]"
+    # 观测源:激光雷达
+    observation_sources: ["scan"]
+    scan:
+      type: "scan"
+      topic: "/scan"
+      min_height: 0.0
+      max_height: 2.0
+      enabled: true

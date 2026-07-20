@@ -56,6 +56,7 @@ public:
     max_vx_ = declare_parameter<double>("max_vx", 0.5);   // 线速度硬上限,防溢出/危险速度
     max_wz_ = declare_parameter<double>("max_wz", 2.0);   // 角速度硬上限
     debug_tx_ = declare_parameter<bool>("debug_tx", false);  // 打印发送帧十六进制
+    cmd_vel_topic_ = declare_parameter<std::string>("cmd_vel_topic", "cmd_vel");  // 订阅话题
     publish_imu_ = declare_parameter<bool>("publish_imu", false);     // IMU 未到货,默认关
     odom_frame_ = declare_parameter<std::string>("odom_frame", "odom");
     base_frame_ = declare_parameter<std::string>("base_frame", "base_link");
@@ -78,8 +79,9 @@ public:
     }
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
 
+    // 订阅话题可配:默认 cmd_vel(直连遥控/Nav2);启用安全链时设为 cmd_vel_safe
     cmd_sub_ = create_subscription<geometry_msgs::msg::Twist>(
-      "cmd_vel", 10,
+      cmd_vel_topic_, 10,
       std::bind(&CarBaseNode::on_cmd_vel, this, std::placeholders::_1));
 
     last_cmd_time_ = now();
@@ -232,7 +234,7 @@ private:
   }
 
   // 参数
-  std::string device_, odom_frame_, base_frame_;
+  std::string device_, odom_frame_, base_frame_, cmd_vel_topic_;
   int baud_, cmd_vx_sign_, cmd_wz_sign_, odom_vx_sign_, odom_wz_sign_, cmd_timeout_ms_;
   double max_vx_, max_wz_;
   bool debug_tx_;

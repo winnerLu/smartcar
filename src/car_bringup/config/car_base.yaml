@@ -3,6 +3,8 @@ car_base:
   ros__parameters:
     port: /dev/car_base   # udev 固定软链接(见 99-smartcar.rules),不受 ttyACM 编号漂移影响
     baud: 115200
+    # 订阅话题:默认 cmd_vel(直连遥控/Nav2)。启用安全链时改为 cmd_vel_safe
+    cmd_vel_topic: cmd_vel
     # 速度符号:控制帧字节布局修正后(预留位2字节)需重新实测确认,先设 +1
     cmd_vx_sign: 1
     cmd_wz_sign: 1

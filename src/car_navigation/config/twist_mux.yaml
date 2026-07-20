@@ -1,0 +1,24 @@
+# twist_mux 速度源仲裁
+# 多个速度源竞争,按 priority 高者优先;topic 超时后该源失效。
+# 输出到 /cmd_vel_raw,再经 collision_monitor 过滤为 /cmd_vel 给 car_base。
+twist_mux:
+  ros__parameters:
+    use_sim_time: false
+    topics:
+      # 泊车(视觉闭环)优先级最高
+      dock:
+        topic: cmd_vel_dock
+        timeout: 0.5
+        priority: 100
+      # Nav2 导航(Nav2 默认输出 /cmd_vel,直接订阅,无需改 Nav2)
+      navigation:
+        topic: cmd_vel
+        timeout: 0.5
+        priority: 50
+      # 手动遥控(调试用)
+      teleop:
+        topic: cmd_vel_teleop
+        timeout: 0.5
+        priority: 10
+    # twist_mux 输出话题(下游接 collision_monitor)
+    # 注:通过 launch remap 输出到 /cmd_vel_raw
