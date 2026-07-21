@@ -5,11 +5,11 @@
   navigate_to_pose_w_replanning_and_recovery.xml，去掉 BackUp：车尾没有可靠
   障碍感知，倒车恢复会绕过 DWB 的 min_vel_x=0，不能安全使用。
 
-  三次系统恢复依次为：清空局部/全局代价地图、原地旋转、短暂等待。
+  四次系统恢复依次为：清空局部/全局代价地图、左转、右转、短暂等待。
 -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
-    <RecoveryNode number_of_retries="3" name="NavigateRecovery">
+    <RecoveryNode number_of_retries="4" name="NavigateRecovery">
       <PipelineSequence name="NavigateWithReplanning">
         <RateController hz="1.0">
           <RecoveryNode number_of_retries="1" name="ComputePathToPose">
@@ -30,7 +30,8 @@
             <ClearEntireCostmap name="ClearGlobalCostmap-Subtree"
               service_name="global_costmap/clear_entirely_global_costmap"/>
           </Sequence>
-          <Spin spin_dist="1.57"/>
+          <Spin name="SpinLeft" spin_dist="1.57"/>
+          <Spin name="SpinRight" spin_dist="-1.57"/>
           <Wait wait_duration="2"/>
         </RoundRobin>
       </ReactiveFallback>
