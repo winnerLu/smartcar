@@ -1,19 +1,17 @@
 <!--
-  NavigateThroughPoses 的无倒车恢复树。
+  低速智能车 NavigateToPose 安全恢复树。
 
-  bt_navigator 在激活时会同时加载 NavigateToPose 与 NavigateThroughPoses；
-  即使比赛当前只用前者，后者也不能保留对已禁用 BackUp server 的引用。
+  正常 DWB 导航仍禁止倒车；仅在清图、左右旋转均失败后，以 0.03m/s 后退
+  0.10m。倒车同时受 Nav2 局部 costmap 碰撞预测与 collision_monitor 后向
+  防护区约束。
 -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
-    <RecoveryNode number_of_retries="4" name="NavigateRecovery">
+    <RecoveryNode number_of_retries="5" name="NavigateRecovery">
       <PipelineSequence name="NavigateWithReplanning">
-        <RateController hz="0.333">
-          <RecoveryNode number_of_retries="1" name="ComputePathThroughPoses">
-            <ReactiveSequence>
-              <RemovePassedGoals input_goals="{goals}" output_goals="{goals}" radius="0.7"/>
-              <ComputePathThroughPoses goals="{goals}" path="{path}" planner_id="GridBased"/>
-            </ReactiveSequence>
+        <RateController hz="1.0">
+          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
             <ClearEntireCostmap name="ClearGlobalCostmap-Context"
               service_name="global_costmap/clear_entirely_global_costmap"/>
           </RecoveryNode>
@@ -31,6 +29,7 @@
           </Sequence>
           <Spin name="SpinLeft" spin_dist="1.57"/>
           <Spin name="SpinRight" spin_dist="-1.57"/>
+          <BackUp backup_dist="0.10" backup_speed="0.03"/>
           <Wait wait_duration="2"/>
         </RoundRobin>
       </ReactiveFallback>

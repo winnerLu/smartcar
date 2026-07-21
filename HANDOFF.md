@@ -84,7 +84,7 @@
 ## 5. 待解决 / 下一步(按优先级)
 
 1. **自主探索 explore_lite**(m-explore-ros2)——已跑通「Frontier选择→Nav2移动→地图扩展」闭环；`min_frontier_size` 已由 0.75m 调为 0.30m，并启用自然完成后返回启动位姿，**待实机复测完成判定与返航**。上游源码固定在 `explore.repos`;优化版(P3)再自研方向偏置(朝 map +X)。
-2. **防撞脱困**(和探索一起调):首轮探索暴露原进度检查 0.5m/15s 过严、默认 BT 会执行无后向感知的 BackUp。已改为 0.10m/10s，并加入无倒车恢复树(清图→左转→右转→短等)，**待实机复测**；若 collision_monitor 的 stop_zone 仍导致卡死，再结合 `/cmd_vel` 与 `/cmd_vel_safe` 调整，当前不削弱安全区。
+2. **防撞脱困**(和探索一起调):进度检查已由 0.5m/15s 改为 0.10m/10s。恢复树现为清图→左转→右转→受限倒车(0.10m@0.03m/s)→短等；正常 DWB 仍禁倒车。collision_monitor 已增加后向减速/停止区，**待确认雷达后向无遮挡并实机复测**。
 3. **EKF**(robot_localization 融合轮式+IMU):抗碰撞/打滑里程计漂移。方案要求上,目前用纯轮式够用。上了要把 car_base 的 publish_tf 关掉、Nav2 odom_topic 改回 /odometry/filtered。
 4. **视觉泊车**(car_parking):/parking_hint 解耦接口(可人工发调试)→ 导航到附近 → 四面 AprilTag → 视觉闭环停车。依赖摄像头联调。
 
