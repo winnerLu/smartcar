@@ -49,7 +49,7 @@ planner_server:
     GridBased:
       plugin: "nav2_navfn_planner/NavfnPlanner"
       tolerance: 0.25            # 到不了精确目标时允许的误差(m)
-      use_astar: false           # false=Dijkstra
+      use_astar: true            # true=A*，用启发式搜索减少无关栅格扩展
       allow_unknown: true        # 允许穿越未知区域(探索时有用)
 
 # ==================== 局部控制器 DWB ====================
@@ -186,9 +186,8 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        # 实机/仿真窄空间验证：缩小局部膨胀范围，提高贴障转向和倒车通过性。
-        # 全局 costmap 仍保持 0.25m，局部控制在近距离采用 0.10m。
-        inflation_radius: 0.10
+        # 局部采用折中膨胀范围：比全局0.25m更易通过窄道，同时保留15cm余量。
+        inflation_radius: 0.15
 
 # ==================== 行为树导航器 ====================
 bt_navigator:
