@@ -66,8 +66,10 @@ controller_server:
 
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
-      required_movement_radius: 0.5
-      movement_time_allowance: 15.0
+      # 低速探索时避障/转向位移较小；原 0.5m/15s 会把正常机动误判为卡死。
+      required_movement_radius: 0.10
+      # 真正静止 10s 后进入清图/旋转恢复，比默认等待更快。
+      movement_time_allowance: 10.0
 
     goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
@@ -194,6 +196,8 @@ bt_navigator:
     odom_topic: /wheel/odom
     bt_loop_duration: 10
     default_server_timeout: 20
+    # 自定义恢复树不含 BackUp；车尾无可靠障碍感知，禁止倒车恢复。
+    default_nav_to_pose_bt_xml: "$(find-pkg-share car_navigation)/behavior_trees/navigate_to_pose_no_backup.xml"
 
 # ==================== 恢复行为 ====================
 behavior_server:
@@ -204,14 +208,11 @@ behavior_server:
     local_frame: odom
     global_frame: map
     robot_base_frame: base_link
-    behavior_plugins: ["spin", "backup", "wait"]
+    behavior_plugins: ["spin", "wait"]
     spin:
       plugin: "nav2_behaviors/Spin"
-    backup:
-      plugin: "nav2_behaviors/BackUp"
     wait:
       plugin: "nav2_behaviors/Wait"
-    # 无后向传感器,不用 backup 恢复(或限制极小)
     simulate_ahead_time: 2.0
 
 # ==================== 速度平滑(可选,先留)====================
