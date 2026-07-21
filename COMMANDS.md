@@ -137,6 +137,47 @@ Foxglove 看 /scan 点云和 /map 墙重合=定位准 → 用 RViz/Foxglove "2D 
 
 **导航注意**:别开 keyboard_teleop(抢 /cmd_vel);留足空间准备急停;窄道规划不出路径多为 inflation_radius(0.25) 偏大,实测再调。
 
+## 自主探索(explore_lite)
+
+首次部署或 `explore.repos` 版本变化后，在香橙派安装源码依赖：
+
+```bash
+cd ~/robot_ws
+vcs import src < explore.repos
+rosdep install --from-paths src --ignore-src -y
+colcon build --symlink-install
+source install/setup.bash
+```
+
+> 若没有 `vcs` 命令：`sudo apt install python3-vcstool`。`m-explore-ros2` 已在
+> `explore.repos` 固定提交；不要复制 WSL 的 build/install 到香橙派。
+
+实机启动（先架空确认节点正常，再放到空旷场地）：
+
+```bash
+# 终端1：底盘 + 雷达 + 速度安全链
+ros2 launch car_bringup bringup.launch.py use_safety:=true
+
+# 终端2：在线SLAM + Nav2 + explore_lite（启动后会自动开始探索）
+ros2 launch car_explore autonomous_exploration.launch.py
+
+# 终端3：可视化
+ros2 run foxglove_bridge foxglove_bridge
+```
+
+暂停、恢复和观察：
+
+```bash
+ros2 topic pub -1 /explore/resume std_msgs/msg/Bool '{data: false}'  # 暂停并取消目标
+ros2 topic pub -1 /explore/resume std_msgs/msg/Bool '{data: true}'   # 恢复探索
+ros2 topic echo /explore/status
+ros2 action info /navigate_to_pose
+```
+
+Foxglove 使用 `map` 固定坐标系，显示 `/map`、`/scan`、TF 和
+`/explore/frontiers`。探索期间不要运行键盘遥控，也不要再启动独立的
+`slam.launch.py` 或 `slam_navigation.launch.py`。
+
 ## 常见坑
 
 - AMCL 初始位姿:必须 `--qos-reliability reliable`,普通 pub 显示发了但 AMCL 收不到。

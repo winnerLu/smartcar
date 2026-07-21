@@ -1,7 +1,7 @@
 # smartcar 项目交接文档
 
 > 面向接手开发的 agent / 队友。先读本文件 + `COMMANDS.md`(命令速查)+ `docs/总体方案设计_v1.3.md`(完整方案,在仓库外的 docs/,若能访问)。
-> 最后更新:2026-07-20
+> 最后更新:2026-07-21
 
 ---
 
@@ -83,7 +83,7 @@
 
 ## 5. 待解决 / 下一步(按优先级)
 
-1. **自主探索 explore_lite**(m-explore-ros2)——第一版用现成的跑通「自动探索+建图」;优化版(P3)自研方向偏置(朝 map +X)。装法待确认(可能需源码装)。
+1. **自主探索 explore_lite**(m-explore-ros2)——WSL 端集成代码已加入 `car_explore`,上游源码版本固定在 `explore.repos`;**待香橙派实测**「自动探索+建图」闭环。优化版(P3)再自研方向偏置(朝 map +X)。
 2. **防撞脱困**(和探索一起调):车禁倒车(min_vel_x=0),进 collision_monitor 的 stop_zone 被硬停又不能倒 → 可能卡死。解法:Nav2 recovery(spin/clear costmap 重规划绕行)+ 必要时受限倒车(车尾加 collision 区)。
 3. **EKF**(robot_localization 融合轮式+IMU):抗碰撞/打滑里程计漂移。方案要求上,目前用纯轮式够用。上了要把 car_base 的 publish_tf 关掉、Nav2 odom_topic 改回 /odometry/filtered。
 4. **视觉泊车**(car_parking):/parking_hint 解耦接口(可人工发调试)→ 导航到附近 → 四面 AprilTag → 视觉闭环停车。依赖摄像头联调。
@@ -143,6 +143,7 @@ ros2_ws/src/
 ├── car_bringup/     启动编排(bringup.launch.py 一键起硬件,use_safety 开关)+ udev 规则
 ├── car_slam/        slam_toolbox 建图配置
 ├── car_navigation/  Nav2配置+多个launch(静态图/联动/安全链)+ twist_mux/collision_monitor 配置
+├── car_explore/     explore_lite参数+自主探索组合launch(待实机联调)
 ├── car_camera/      队友:罗技C270摄像头采集(待联调)
 └── hello_pkg/       初始占位包(可忽略)
 ```

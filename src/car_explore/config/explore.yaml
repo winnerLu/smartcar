@@ -1,0 +1,24 @@
+explore_node:
+  ros__parameters:
+    use_sim_time: false
+
+    # 直接在 slam_toolbox 的原始占据栅格上提取 frontier。
+    # 不使用带 inflation 代价值的 Nav2 global_costmap。
+    robot_base_frame: base_link
+    costmap_topic: /map
+    costmap_updates_topic: /map_updates
+    transform_tolerance: 0.3
+
+    visualize: true
+    planner_frequency: 0.15
+    progress_timeout: 30.0
+
+    # 第一版沿用上游默认评分：路径距离代价 + frontier 信息增益。
+    # +X 方向偏置留到闭环跑通后的 P3 优化。
+    potential_scale: 3.0
+    orientation_scale: 0.0
+    gain_scale: 1.0
+    min_frontier_size: 0.75
+
+    # 比赛限时探索无需在地图探索完成后返回起点。
+    return_to_init: false
