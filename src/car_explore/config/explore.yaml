@@ -1,24 +1,47 @@
 explore_node:
   ros__parameters:
+    # false 使用实机系统时间；仿真或 rosbag 使用 /clock 时才设为 true。
     use_sim_time: false
 
-    # 直接在 slam_toolbox 的原始占据栅格上提取 frontier。
-    # 不使用带 inflation 代价值的 Nav2 global_costmap。
+    # 机器人位姿所用的车体坐标系。节点通过 TF 查询 map -> base_link。
     robot_base_frame: base_link
+
+    # 用于提取 Frontier 的完整占据栅格及其增量更新话题。
+    # 直接使用 slam_toolbox 的原始 /map，不使用带障碍膨胀代价值的 Nav2 costmap。
     costmap_topic: /map
     costmap_updates_topic: /map_updates
+
+    # TF 查询允许的时间容差（秒）；过小易受传输延迟影响，过大会容忍陈旧位姿。
     transform_tolerance: 0.3
 
+    # 发布 /explore/frontiers MarkerArray，供 Foxglove/RViz 查看候选前沿及目标。
     visualize: true
+
+    # Frontier 重算与目标更新频率（Hz）。0.15 Hz 约每 6.7 秒更新一次，
+    # 地图扩展时目标变化会使 Nav2 正常收到 preemption。
     planner_frequency: 0.15
+
+    # 同一 Frontier 距离长期没有缩短时的超时（秒）；超时后将其加入探索黑名单。
+    # 这是 explore_lite 的目标进展超时，不是 Nav2 progress_checker 的 10 秒超时。
     progress_timeout: 30.0
 
-    # 第一版沿用上游默认评分：路径距离代价 + frontier 信息增益。
-    # +X 方向偏置留到闭环跑通后的 P3 优化。
+    # Frontier 按 cost 从小到大选择，当前源码公式为：
+    # cost = potential_scale * 到 Frontier 的最短距离
+    #        - gain_scale * Frontier 长度。
+    # potential_scale 越大越偏好近处，降低长距离行驶成本。
     potential_scale: 3.0
-    orientation_scale: 0.0
-    gain_scale: 1.0
-    min_frontier_size: 0.75
 
-    # 比赛限时探索无需在地图探索完成后返回起点。
-    return_to_init: false
+    # 上游为方向评分预留的权重；当前锁定版本未在 cost 公式中实际使用。
+    # 第一版保持 0，map +X 方向偏置留到 P3 自研优化。
+    orientation_scale: 0.0
+
+    # 信息增益（Frontier 长度）权重；越大越偏好长 Frontier/大片未知边界。
+    gain_scale: 1.0
+
+    # 最短 Frontier 长度（米）。地图分辨率 0.05m 时，0.30m 约为连续 6 格；
+    # 比原 0.75m 更适合迷宫窄通道，同时仍过滤零碎噪声。
+    min_frontier_size: 0.30
+
+    # true：自然完成（无 Frontier 或所有 Frontier 均尝试过）后，通过 Nav2 返回
+    # explore_lite 启动时记录的初始 map 位姿；人工发布 resume=false 暂停时不返航。
+    return_to_init: true

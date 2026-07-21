@@ -37,7 +37,7 @@
 - WSL 与香橙派 **ROS2 DDS 不通**(WSL2 NAT + 公司网关),不能跨机看话题。可视化靠香橙派跑 foxglove_bridge + 浏览器。
 - 编译命令:`source /opt/ros/humble/setup.bash && colcon build --symlink-install`
 - 改代码前**先 `git pull`**——队友(摄像头 car_camera)会推代码,防冲突。
-- 提交规范:git 提交信息末尾带 `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`。文档改动在 docs/(仓库外),不进 git。
+- 提交规范:使用简洁中文提交信息，不添加 `Co-Authored-By`。文档改动在 docs/(仓库外),不进 git。
 
 ---
 
@@ -83,7 +83,7 @@
 
 ## 5. 待解决 / 下一步(按优先级)
 
-1. **自主探索 explore_lite**(m-explore-ros2)——WSL 端集成代码已加入 `car_explore`,上游源码版本固定在 `explore.repos`;**待香橙派实测**「自动探索+建图」闭环。优化版(P3)再自研方向偏置(朝 map +X)。
+1. **自主探索 explore_lite**(m-explore-ros2)——已跑通「Frontier选择→Nav2移动→地图扩展」闭环；`min_frontier_size` 已由 0.75m 调为 0.30m，并启用自然完成后返回启动位姿，**待实机复测完成判定与返航**。上游源码固定在 `explore.repos`;优化版(P3)再自研方向偏置(朝 map +X)。
 2. **防撞脱困**(和探索一起调):首轮探索暴露原进度检查 0.5m/15s 过严、默认 BT 会执行无后向感知的 BackUp。已改为 0.10m/10s，并加入无倒车恢复树(清图→spin→短等)，**待实机复测**；若 collision_monitor 的 stop_zone 仍导致卡死，再结合 `/cmd_vel` 与 `/cmd_vel_safe` 调整，当前不削弱安全区。
 3. **EKF**(robot_localization 融合轮式+IMU):抗碰撞/打滑里程计漂移。方案要求上,目前用纯轮式够用。上了要把 car_base 的 publish_tf 关掉、Nav2 odom_topic 改回 /odometry/filtered。
 4. **视觉泊车**(car_parking):/parking_hint 解耦接口(可人工发调试)→ 导航到附近 → 四面 AprilTag → 视觉闭环停车。依赖摄像头联调。
