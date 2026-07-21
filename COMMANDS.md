@@ -156,6 +156,7 @@ source install/setup.bash
 
 ```bash
 # 终端1：底盘 + 雷达 + 速度安全链
+# 可选外层碰撞监控；当前自主探索推荐先使用默认 use_safety:=false，依靠 Nav2 避障。
 ros2 launch car_bringup bringup.launch.py use_safety:=true
 
 # 终端2：在线SLAM + Nav2 + explore_lite（启动后会自动开始探索）

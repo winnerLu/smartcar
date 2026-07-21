@@ -168,8 +168,9 @@ local_costmap:
       height: 3
       resolution: 0.05
       footprint: "[[0.197, 0.093], [0.197, -0.093], [-0.033, -0.093], [-0.033, 0.093]]"
-      # 局部避障采用较小余量，允许贴近障碍脱困；实测车身轮廓本身不缩小。
-      footprint_padding: 0.005
+      # 不启用外层 collision_monitor 时，由 Nav2 自身承担主要避障；
+      # 在实测车身轮廓外增加1.5cm硬边界，兼顾尺寸误差与窄道通过性。
+      footprint_padding: 0.015
       plugins: ["obstacle_layer", "inflation_layer"]
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
