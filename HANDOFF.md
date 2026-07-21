@@ -84,7 +84,7 @@
 ## 5. 待解决 / 下一步(按优先级)
 
 1. **自主探索 explore_lite**(m-explore-ros2)——已跑通「Frontier选择→Nav2移动→地图扩展」闭环；`min_frontier_size` 已由 0.75m 调为 0.30m，并启用自然完成后返回启动位姿，**待实机复测完成判定与返航**。上游源码固定在 `explore.repos`;优化版(P3)再自研方向偏置(朝 map +X)。
-2. **防撞脱困**(和探索一起调):进度检查已由 0.5m/15s 改为 0.10m/10s。恢复树现为清图→左转→右转→受限倒车(0.10m@0.05m/s)→短等；正常 DWB 仍禁倒车。实测固定前后 stop/slowdown 区会把远离障碍的恢复动作也归零，已改为基于 `/local_costmap/published_footprint` 的方向感知 approach 模型；因安全链介入仍偏多，当前采用激进兜底参数（TTC 0.6s，至少6个激光点触发），**待实机复测并对比 `/cmd_vel_raw` 与 `/cmd_vel_safe`**。
+2. **防撞脱困**(和探索一起调):进度检查已由 0.5m/15s 改为 0.10m/10s。恢复树现为清图→左转→右转→激进受限倒车(0.12m@0.08m/s)→短等；正常 DWB 仍禁倒车。日志确认 BackUp 曾被 behavior_server 的 2s 内部碰撞预演在发速度前拒绝，现将 `simulate_ahead_time` 降至0.5s、局部 footprint padding 降至0.005m。外层 collision_monitor 为方向感知 approach 激进兜底（TTC 0.6s，至少6个激光点触发），**待实机复测并对比 `/cmd_vel_raw` 与 `/cmd_vel_safe`**。
 3. **EKF**(robot_localization 融合轮式+IMU):抗碰撞/打滑里程计漂移。方案要求上,目前用纯轮式够用。上了要把 car_base 的 publish_tf 关掉、Nav2 odom_topic 改回 /odometry/filtered。
 4. **视觉泊车**(car_parking):/parking_hint 解耦接口(可人工发调试)→ 导航到附近 → 四面 AprilTag → 视觉闭环停车。依赖摄像头联调。
 
