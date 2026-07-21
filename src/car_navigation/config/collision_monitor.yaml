@@ -1,58 +1,38 @@
-# Nav2 Collision Monitor:碰撞监控,快撞障碍时主动减速/停车。
-# 输入 cmd_vel_in(twist_mux 输出的 /cmd_vel_raw),输出 cmd_vel_out(/cmd_vel 给 car_base)。
-# 用 /scan 判断车周围障碍,分两级:接近->减速,很近->停车。
-# 这是雷达能扫到的障碍的软件防撞兜底(雷达扫不到的低矮/透明障碍仍需后续硬件方案)。
+# Nav2 Collision Monitor：根据当前速度方向预测车体是否将与激光点碰撞。
+# 输入 /cmd_vel_raw（twist_mux 输出），输出 /cmd_vel_safe（给 car_base）。
+# approach 会沿当前线速度和角速度模拟 footprint：朝障碍运动时逐渐降速，
+# 远离障碍时不会被另一侧障碍错误拦停，因此允许安全倒车脱困。
+# 雷达扫不到的低矮、透明障碍仍不受此软件防护。
 collision_monitor:
   ros__parameters:
     use_sim_time: false
     base_frame_id: "base_link"
     odom_frame_id: "odom"
     cmd_vel_in_topic: "cmd_vel_raw"      # twist_mux 输出
-    cmd_vel_out_topic: "cmd_vel_safe"    # 给 car_base(car_base 需设 cmd_vel_topic:=cmd_vel_safe)
+    cmd_vel_out_topic: "cmd_vel_safe"    # car_base 的速度输入
     state_topic: "collision_monitor_state"
     transform_tolerance: 0.2
     source_timeout: 1.0
     base_shift_correction: true
     stop_pub_timeout: 2.0
-    # 前后各两级防护区。后向区为受限倒车恢复提供雷达安全兜底。
-    polygons: ["slow_zone", "rear_slow_zone", "stop_zone", "rear_stop_zone"]
-    # 减速区:检测到障碍则降速到 slowdown_ratio
-    slow_zone:
+
+    # 固定前/后 stop、slowdown 区不区分运动方向，会阻止逃离障碍，故改用 approach。
+    polygons: ["footprint_approach"]
+    footprint_approach:
       type: "polygon"
-      action_type: "slowdown"
-      slowdown_ratio: 0.3               # 降到 30% 速度
-      min_points: 4
+      action_type: "approach"
+      # Nav2 局部代价地图发布的实际（含 padding）车体轮廓。
+      # 启动探索前必须确认此话题存在且持续发布。
+      footprint_topic: "/local_costmap/published_footprint"
+      # 保持预计碰撞时间不小于 1.2s；越接近碰撞，输出速度越低。
+      time_before_collision: 1.2
+      simulation_time_step: 0.1
+      # 源码判定为 inside_points > max_points，即至少 4 个点触发。
+      max_points: 3
       visualize: true
-      polygon_pub_topic: "slow_zone"
-      # 车前方矩形区(相对 base_link,车头在 +x)。扁平数组 [x1,y1, x2,y2, ...]
-      points: [0.40, 0.20, 0.40, -0.20, -0.05, -0.20, -0.05, 0.20]
-    # 停止区:检测到障碍立即停
-    stop_zone:
-      type: "polygon"
-      action_type: "stop"
-      min_points: 4
-      visualize: true
-      polygon_pub_topic: "stop_zone"
-      # 更贴近车体的区,进入即停(车头19.7cm + 约6cm安全距)
-      points: [0.26, 0.14, 0.26, -0.14, -0.05, -0.14, -0.05, 0.14]
-    # 车尾减速区：base_link 后方 0.30m 范围。只要后方点云进入即将速度降至30%。
-    rear_slow_zone:
-      type: "polygon"
-      action_type: "slowdown"
-      slowdown_ratio: 0.3
-      min_points: 4
-      visualize: true
-      polygon_pub_topic: "rear_slow_zone"
-      points: [-0.03, 0.16, -0.03, -0.16, -0.30, -0.16, -0.30, 0.16]
-    # 车尾停止区：现 footprint 后缘 x=-0.033m，额外保留约0.10m安全距离。
-    rear_stop_zone:
-      type: "polygon"
-      action_type: "stop"
-      min_points: 4
-      visualize: true
-      polygon_pub_topic: "rear_stop_zone"
-      points: [-0.03, 0.14, -0.03, -0.14, -0.13, -0.14, -0.13, 0.14]
-    # 观测源:激光雷达
+      polygon_pub_topic: "footprint_approach"
+      enabled: true
+
     observation_sources: ["scan"]
     scan:
       type: "scan"

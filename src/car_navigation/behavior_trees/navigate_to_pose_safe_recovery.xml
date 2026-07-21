@@ -2,8 +2,8 @@
   低速智能车 NavigateToPose 安全恢复树。
 
   正常 DWB 导航仍禁止倒车；仅在清图、左右旋转均失败后，以 0.05m/s 后退
-  0.10m。倒车同时受 Nav2 局部 costmap 碰撞预测与 collision_monitor 后向
-  防护区约束。
+  0.10m。倒车同时受 Nav2 局部 costmap 碰撞预测与 collision_monitor
+  方向感知的 footprint approach 模型约束。
 -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
