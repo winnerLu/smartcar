@@ -198,6 +198,7 @@ bt_navigator:
     default_server_timeout: 20
     # 自定义恢复树不含 BackUp；车尾无可靠障碍感知，禁止倒车恢复。
     default_nav_to_pose_bt_xml: "$(find-pkg-share car_navigation)/behavior_trees/navigate_to_pose_no_backup.xml"
+    default_nav_through_poses_bt_xml: "$(find-pkg-share car_navigation)/behavior_trees/navigate_through_poses_no_backup.xml"
 
 # ==================== 恢复行为 ====================
 behavior_server:
