@@ -1,0 +1,22 @@
+# 电脑摄像头近似内参(640x480,水平视场角约 70°)
+# 仅用于未标定前的快速验证,正式使用前请用 camera_calibration 标定并替换。
+image_width: 640
+image_height: 480
+camera_name: webcam
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [457.0, 0.0, 320.0, 0.0, 457.0, 240.0, 0.0, 0.0, 1.0]
+distortion_model: plumb_bob
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data: [0.0, 0.0, 0.0, 0.0, 0.0]
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
+projection_matrix:
+  rows: 3
+  cols: 4
+  data: [457.0, 0.0, 320.0, 0.0, 0.0, 457.0, 240.0, 0.0, 0.0, 0.0, 1.0, 0.0]

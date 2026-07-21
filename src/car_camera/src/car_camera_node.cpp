@@ -1,13 +1,14 @@
 // car_camera 节点:USB 摄像头(罗技 C270)采集与发布。
 //
 // 发布:  /camera/image_raw    (sensor_msgs/Image, bgr8)   <- cv_bridge 转换
-//        /camera/camera_info  (sensor_msgs/CameraInfo)    <- 宽高 + frame_id(内参待标定)
+//        /camera/camera_info  (sensor_msgs/CameraInfo)    <- 支持从 camera_info_url 加载标定
 // TF:    base_link -> camera_link (由 launch 里的 static_transform_publisher 发布)
 //
 // 关键设计:
 //   - C270 为标准 UVC 免驱摄像头,用 cv::VideoCapture 直接读取(V4L2 后端)。
 //   - MJPG 模式 640x480@30fps 最稳;YUYV 在高分辨率下受 USB2 带宽限制会掉帧。
-//   - 起步仅做采集发布,内参暂置零,后续标定可用 camera_info_url 补。
+//   - 通过 camera_info_manager 支持 camera_info_url 参数加载标定文件;
+//     未提供 url 时内参置零,仅填尺寸与 frame_id。
 //   - cap.read() 阻塞到下一帧,故 timer 实际以摄像头帧率运行;本节点无其它订阅,
 //     单线程 executor 即可。后续若加订阅需改成独立抓帧线程。
 
@@ -20,6 +21,7 @@
 #include "sensor_msgs/msg/camera_info.hpp"
 #include "std_msgs/msg/header.hpp"
 #include "cv_bridge/cv_bridge.h"
+#include "camera_info_manager/camera_info_manager.hpp"
 #include "opencv2/videoio.hpp"
 
 using namespace std::chrono_literals;
@@ -40,8 +42,10 @@ public:
     image_height_ = declare_parameter<int>("image_height", 480);
     framerate_ = declare_parameter<int>("framerate", 30);
     pixel_format_ = declare_parameter<std::string>("pixel_format", "mjpg");  // mjpg / yuyv
-    // camera_name 仅作标识记录(可通过 ros2 param 查看),不参与发布
+    // camera_name 用于 camera_info_manager 识别配置文件
     declare_parameter<std::string>("camera_name", "logitech_c270");
+    const std::string camera_name = get_parameter("camera_name").as_string();
+    const std::string camera_info_url = declare_parameter<std::string>("camera_info_url", "");
 
     // ---- 打开摄像头 ----
     // 用字符串设备路径 + V4L2 后端;设备名由 udev 固定为 /dev/camera_c270
@@ -65,6 +69,18 @@ public:
     const double real_fps = cap_.get(cv::CAP_PROP_FPS);
     RCLCPP_INFO(get_logger(), "已打开 %s: %dx%d @ %.1f fps (%s)",
       video_device_.c_str(), image_width_, image_height_, real_fps, pixel_format_.c_str());
+
+    // ---- camera_info 管理器 ----
+    // 若提供了标定文件 URL,则发布真实内参;否则发布默认空内参(宽高 + frame_id)
+    cinfo_ = std::make_unique<camera_info_manager::CameraInfoManager>(
+      this, camera_name, camera_info_url);
+    if (camera_info_url.empty()) {
+      RCLCPP_WARN(get_logger(), "未提供 camera_info_url,发布的 camera_info 内参为零,请尽快标定");
+    } else if (!cinfo_->isCalibrated()) {
+      RCLCPP_WARN(get_logger(), "camera_info_url 加载失败或内参无效: %s", camera_info_url.c_str());
+    } else {
+      RCLCPP_INFO(get_logger(), "已从 %s 加载相机标定参数", camera_info_url.c_str());
+    }
 
     // ---- 发布 ----
     image_pub_ = create_publisher<sensor_msgs::msg::Image>("~/image_raw", 10);
@@ -99,8 +115,8 @@ private:
     auto img_msg = cv_img.toImageMsg();
     image_pub_->publish(*img_msg);
 
-    // CameraInfo:起步内参置零,仅填尺寸与 frame_id(后续标定补 distortion/intrinsics)
-    sensor_msgs::msg::CameraInfo info;
+    // CameraInfo:从 camera_info_manager 获取,未标定则只保留尺寸与 frame_id
+    sensor_msgs::msg::CameraInfo info = cinfo_->getCameraInfo();
     info.header.stamp = t;
     info.header.frame_id = frame_id_;
     info.width = image_width_;
@@ -121,6 +137,7 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr image_pub_;
   rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr info_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
+  std::unique_ptr<camera_info_manager::CameraInfoManager> cinfo_;
 };
 
 }  // namespace car_camera
