@@ -73,9 +73,9 @@
 **导航 ✅**(car_navigation):
 - 静态图导航(navigation.launch.py + AMCL):实测通过。
 - **SLAM+Nav2 联动(slam_navigation.launch.py):比赛模式,实测点目标能导航避障**。
-- 算法:NavFn(Dijkstra)全局 + DWB 局部 + 分层 costmap + AMCL(静态图时)。
+- 算法:NavFn(A*)全局 + DWB 局部 + 分层 costmap + AMCL(静态图时)。
 
-**安全链 ✅（可选）**(car_navigation):twist_mux + collision_monitor。`bringup use_safety:=true` 时启用；当前自主探索实测以默认 `use_safety:=false` 更流畅，依靠 Nav2 local costmap/DWB/恢复行为避障，局部 footprint padding 已提高到0.015m。
+**安全链 ✅（可选）**(car_navigation):twist_mux + collision_monitor。`bringup use_safety:=true` 时启用；当前自主探索实测以默认 `use_safety:=false` 更流畅，依靠 Nav2 local costmap/DWB/恢复行为避障，局部 footprint padding 当前测试值为0.03m。
 
 **摄像头**(car_camera,队友写):罗技 C270 采集节点已在仓库,**尚未联调对接**(AprilTag/颜色球视觉链路)。
 
@@ -83,8 +83,8 @@
 
 ## 5. 待解决 / 下一步(按优先级)
 
-1. **自主探索 explore_lite**(m-explore-ros2)——已跑通「Frontier选择→Nav2移动→地图扩展」闭环；`min_frontier_size` 已由 0.75m 调为 0.30m，并启用自然完成后返回启动位姿，**待实机复测完成判定与返航**。上游源码固定在 `explore.repos`;优化版(P3)再自研方向偏置(朝 map +X)。
-2. **防撞脱困**(和探索一起调):全局规划已由 Dijkstra 切换为 A*。进度检查已由 0.5m/15s 改为 0.10m/10s。恢复树现为清图→左转→右转→激进受限倒车(0.12m@0.08m/s)→短等；正常 DWB 仍禁倒车。日志确认 BackUp 曾被 behavior_server 的 2s 内部碰撞预演在发速度前拒绝，现将 `simulate_ahead_time` 降至0.5s、局部 footprint padding 设为0.015m，局部 inflation radius 为0.15m（全局仍为0.25m）。外层 collision_monitor 保留为可选方向感知兜底（TTC 0.6s，至少6个激光点触发）；当前探索默认不启用它，**待实机复测 Nav2 单层避障效果**。
+1. **自主探索 explore_lite**(m-explore-ros2)——已跑通「Frontier选择→Nav2移动→地图扩展」闭环；`min_frontier_size` 已由 0.75m 调为 0.30m，并启用自然完成后返回启动位姿。大图约5分多钟完成，当前将最高线速度由0.22提高到0.28m/s、最高角速度由1.0提高到1.2rad/s进行提速测试；**需同时观察建图重影和最终扫描角度残差是否恶化**。上游源码固定在 `explore.repos`;优化版(P3)再自研方向偏置(朝 map +X)。
+2. **防撞脱困**(和探索一起调):全局规划已由 Dijkstra 切换为 A*。进度检查已由 0.5m/15s 改为 0.10m/10s。恢复树现为清图→左转→右转→激进受限倒车(0.12m@0.08m/s)→短等；正常 DWB 仍禁倒车。日志确认 BackUp 曾被 behavior_server 的 2s 内部碰撞预演在发速度前拒绝，现将 `simulate_ahead_time` 降至0.5s、局部 footprint padding 测试值设为0.03m，局部 inflation radius 为0.15m（全局仍为0.25m）。外层 collision_monitor 保留为可选方向感知兜底（TTC 0.6s，至少6个激光点触发）；当前探索默认不启用它，**待实机复测 Nav2 单层避障效果**。
 3. **EKF**(robot_localization 融合轮式+IMU):抗碰撞/打滑里程计漂移。方案要求上,目前用纯轮式够用。上了要把 car_base 的 publish_tf 关掉、Nav2 odom_topic 改回 /odometry/filtered。
 4. **视觉泊车**(car_parking):/parking_hint 解耦接口(可人工发调试)→ 导航到附近 → 四面 AprilTag → 视觉闭环停车。依赖摄像头联调。
 
