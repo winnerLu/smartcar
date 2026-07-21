@@ -3,15 +3,16 @@
 
 数据流:
     Nav2      -> /cmd_vel_nav    ┐
-    teleop    -> /cmd_vel_teleop ├-> twist_mux -> /cmd_vel_raw -> collision_monitor -> /cmd_vel -> car_base
+    teleop    -> /cmd_vel_teleop ├-> twist_mux -> /cmd_vel_raw -> collision_monitor -> /cmd_vel_safe -> car_base
     泊车      -> /cmd_vel_dock   ┘   (优先级仲裁)                  (快撞减速/停车)
 
 作用:
 - twist_mux:多速度源按优先级仲裁(泊车>Nav2>遥控),防止多源抢底盘。
-- collision_monitor:用 /scan 监测车前障碍,进减速区降速、进停止区停车,
-  解决"撞了还顶着障碍前进"(禁倒车副作用),是雷达可见障碍的软件防撞兜底。
+- collision_monitor:用 /scan 和当前速度方向预测 footprint 碰撞，仅在预计碰撞
+  时间很短时限速，是雷达可见障碍的软件防撞兜底。
 
-前置:需 car_base(订阅 /cmd_vel)+ /scan 在运行。
+前置:需 car_base(订阅 /cmd_vel_safe)、/scan 和
+     /local_costmap/published_footprint 在运行。
 配合 slam_navigation 或 navigation 使用时,需把 Nav2 输出改到 /cmd_vel_nav(见 nav2_params 注释)。
 
 用法:
