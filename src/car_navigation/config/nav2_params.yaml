@@ -50,7 +50,8 @@ planner_server:
       plugin: "nav2_navfn_planner/NavfnPlanner"
       tolerance: 0.25            # 到不了精确目标时允许的误差(m)
       use_astar: true            # true=A*，用启发式搜索减少无关栅格扩展
-      allow_unknown: true        # 允许穿越未知区域(探索时有用)
+      # Frontier 目标由探索节点选在已知可通行区；A* 不应抄近路穿过未知区。
+      allow_unknown: false
 
 # ==================== 局部控制器 DWB ====================
 controller_server:
@@ -82,12 +83,12 @@ controller_server:
       debug_trajectory_details: true
       # 速度限制(差速:x 前进 + z 转向,y 恒 0)
       min_vel_x: 0.0             # 无后向传感器,禁止倒车
-      max_vel_x: 0.28           # 探索提速测试：原0.22m/s
+      max_vel_x: 0.22           # 降低转弯和新区域探索时的碰撞风险
       min_vel_y: 0.0
       max_vel_y: 0.0
       max_vel_theta: 1.2        # 原1.0rad/s；继续保证雷达10Hz下有足够扫描重叠
       min_speed_xy: 0.0
-      max_speed_xy: 0.28
+      max_speed_xy: 0.22
       min_speed_theta: 0.0
       # 加速度限制
       acc_lim_x: 1.0
@@ -107,7 +108,7 @@ controller_server:
       # 评价插件
       critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign",
                 "PathAlign", "PathDist", "GoalDist"]
-      BaseObstacle.scale: 0.02
+      BaseObstacle.scale: 0.05  # 增强DWB对贴近局部障碍轨迹的惩罚
       PathAlign.scale: 32.0
       PathAlign.forward_point_distance: 0.1
       GoalAlign.scale: 24.0
@@ -199,7 +200,7 @@ bt_navigator:
     odom_topic: /wheel/odom
     bt_loop_duration: 10
     default_server_timeout: 20
-    # 自定义安全恢复树：正常导航禁倒车，仅在左右旋转均失败后后退 0.12m。
+    # 自定义安全恢复树：清图 -> 后退0.10m -> 左60° -> 右60°。
     default_nav_to_pose_bt_xml: "$(find-pkg-share car_navigation)/behavior_trees/navigate_to_pose_safe_recovery.xml"
     default_nav_through_poses_bt_xml: "$(find-pkg-share car_navigation)/behavior_trees/navigate_through_poses_safe_recovery.xml"
 
@@ -219,7 +220,7 @@ behavior_server:
       plugin: "nav2_behaviors/BackUp"
     wait:
       plugin: "nav2_behaviors/Wait"
-    # 激进恢复：只预演未来 0.5s。倒车 0.08m/s 时约检查前方 4cm，
+    # 激进恢复：只预演未来 0.5s。倒车 0.05m/s 时约检查前方 2.5cm，
     # 避免局部 costmap 中较远的膨胀障碍让 BackUp 在发出速度前立即失败。
     simulate_ahead_time: 0.5
 
@@ -230,7 +231,7 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: false
     feedback: "OPEN_LOOP"
-    max_velocity: [0.28, 0.0, 1.2]
+    max_velocity: [0.22, 0.0, 1.2]
     min_velocity: [0.0, 0.0, -1.0]
     max_accel: [1.0, 0.0, 2.0]
     max_decel: [-1.0, 0.0, -2.0]

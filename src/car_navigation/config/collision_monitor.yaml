@@ -24,9 +24,9 @@ collision_monitor:
       # Nav2 局部代价地图发布的实际（含 padding）车体轮廓。
       # 启动探索前必须确认此话题存在且持续发布。
       footprint_topic: "/local_costmap/published_footprint"
-      # 激进通行模式：只在预计 0.6s 内将发生碰撞时介入。
-      # 最高前进速度 0.22m/s 时约对应 0.13m 预测距离；低速恢复时更短。
-      time_before_collision: 0.6
+      # 紧急兜底模式：只在预计 0.4s 内将发生碰撞时介入。
+      # 最高前进速度 0.22m/s 时约对应 0.09m 预测距离；低速恢复时更短。
+      time_before_collision: 0.4
       simulation_time_step: 0.1
       # 源码判定为 inside_points > max_points，即至少 6 个点触发；
       # 可过滤零散噪点，但细杆、透明和低矮障碍更可能漏检。

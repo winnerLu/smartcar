@@ -1,13 +1,13 @@
 <!--
   低速智能车 NavigateToPose 安全恢复树。
 
-  正常 DWB 导航仍禁止倒车；仅在清图、左右旋转均失败后，以 0.08m/s 后退
-  0.12m。倒车同时受 Nav2 局部 costmap 短距离碰撞预测与 collision_monitor
-  方向感知的 footprint approach 模型约束。
+  正常 DWB 导航仍禁止倒车；恢复时先清图，再尝试短距离倒车，
+  然后分别尝试左60°和右60°。第二次旋转从左60°跨过原始方向到右60°，
+  避免“左90°再右90°”回到原地却没有换方向的无效恢复。
 -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
-    <RecoveryNode number_of_retries="5" name="NavigateRecovery">
+    <RecoveryNode number_of_retries="4" name="NavigateRecovery">
       <PipelineSequence name="NavigateWithReplanning">
         <RateController hz="1.0">
           <RecoveryNode number_of_retries="1" name="ComputePathToPose">
@@ -16,7 +16,8 @@
               service_name="global_costmap/clear_entirely_global_costmap"/>
           </RecoveryNode>
         </RateController>
-        <FollowPath path="{path}" controller_id="FollowPath"/>
+        <!-- 香橙派负载高时 20ms 不足以等待 FollowPath 应答，会与恢复动作竞态。 -->
+        <FollowPath path="{path}" controller_id="FollowPath" server_timeout="2000"/>
       </PipelineSequence>
       <ReactiveFallback name="RecoveryFallback">
         <GoalUpdated/>
@@ -27,10 +28,9 @@
             <ClearEntireCostmap name="ClearGlobalCostmap-Subtree"
               service_name="global_costmap/clear_entirely_global_costmap"/>
           </Sequence>
-          <Spin name="SpinLeft" spin_dist="1.57"/>
-          <Spin name="SpinRight" spin_dist="-1.57"/>
-          <BackUp backup_dist="0.12" backup_speed="0.08"/>
-          <Wait wait_duration="2"/>
+          <BackUp name="ShortBackUp" backup_dist="0.10" backup_speed="0.05"/>
+          <Spin name="SpinLeft60" spin_dist="1.0472"/>
+          <Spin name="SpinAcrossToRight60" spin_dist="-2.0944"/>
         </RoundRobin>
       </ReactiveFallback>
     </RecoveryNode>

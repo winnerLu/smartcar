@@ -32,7 +32,7 @@ frontier_explorer:
     weight_gain_ws: 1.0
 
     # 仅用于 MRTSP 到达时间估计，不会直接修改 Nav2 速度指令。
-    max_linear_speed_vmax: 0.28
+    max_linear_speed_vmax: 0.22
     max_angular_speed_wmax: 1.2
     sensor_effective_range_m: 1.5
 
@@ -53,10 +53,17 @@ frontier_explorer:
     occ_threshold: 80
     escape_enabled: true
 
-    # 第一轮关闭额外抢占和失败区域抑制，只比较目标排序，减少干扰变量。
+    # 不在行驶中频繁抢占目标；对连续失败或长时间无进展的 Frontier
+    # 暂时抑制，避免在同一不可达目标上反复清图和恢复。
     goal_preemption_enabled: false
     goal_skip_on_blocked_goal: true
-    frontier_suppression_enabled: false
+    frontier_suppression_enabled: true
+    frontier_suppression_attempt_threshold: 2
+    frontier_suppression_no_progress_timeout_s: 12.0
+    frontier_suppression_progress_epsilon_m: 0.10
+    frontier_suppression_timeout_s: 60.0
+    frontier_suppression_startup_grace_period_s: 15.0
+    all_frontiers_suppressed_behavior: stay
 
     # 到达一个 Frontier 后稍等一帧地图更新，避免立即基于旧地图选新目标。
     post_goal_settle_enabled: true

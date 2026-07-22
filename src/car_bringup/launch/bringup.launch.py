@@ -7,6 +7,8 @@
 
 用法:
     ros2 launch car_bringup bringup.launch.py
+    # 仅在室内架起车轮调试速度链时关闭碰撞监控:
+    ros2 launch car_bringup bringup.launch.py use_safety:=false
     # 只启底盘,不启雷达:
     ros2 launch car_bringup bringup.launch.py use_lidar:=false
     # rviz 实测微调雷达朝向(改 yaw,单位弧度):
@@ -57,8 +59,8 @@ def generate_launch_description():
     declare_use_lidar = DeclareLaunchArgument(
         'use_lidar', default_value='true', description='是否启动激光雷达')
     declare_use_safety = DeclareLaunchArgument(
-        'use_safety', default_value='false',
-        description='启用安全链(twist_mux+collision_monitor);启用时 car_base 自动订阅 cmd_vel_safe')
+        'use_safety', default_value='true',
+        description='启用安全链(twist_mux+collision_monitor);默认启用，启用时 car_base 自动订阅 cmd_vel_safe')
     declare_base_port = DeclareLaunchArgument(
         'base_port', default_value='/dev/car_base',
         description='底盘串口设备(udev 固定软链接)')
