@@ -21,9 +21,10 @@ collision_monitor:
     footprint_approach:
       type: "polygon"
       action_type: "approach"
-      # Nav2 局部代价地图发布的实际（含 padding）车体轮廓。
-      # 启动探索前必须确认此话题存在且持续发布。
-      footprint_topic: "/local_costmap/published_footprint"
+      # 使用实测车身轮廓，不复用 local_costmap 含 3cm padding 的 footprint。
+      # 代价地图 padding 负责提前绕障；碰撞监控只做真实车体边界的紧急兜底。
+      # 否则障碍进入 padding 后会被视为已经在 polygon 内，连后退恢复也会被拦截。
+      points: "[[0.197, 0.093], [0.197, -0.093], [-0.033, -0.093], [-0.033, 0.093]]"
       # 紧急兜底模式：只在预计 0.4s 内将发生碰撞时介入。
       # 最高前进速度 0.22m/s 时约对应 0.09m 预测距离；低速恢复时更短。
       time_before_collision: 0.4

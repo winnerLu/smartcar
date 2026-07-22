@@ -53,8 +53,9 @@ ros2 launch car_explore mrtsp_explore.launch.py
 
 启动后先不下发目标，手动低速前进确认 `/cmd_vel_safe` 能输出、
 `/collision_monitor_state` 有数据，并确认 RViz/Foxglove 中雷达点与
-`/local_costmap/published_footprint` 对齐。这一版碰撞监控只做 0.4s 紧急预测，
-Nav2 局部代价地图和 DWB 仍是主要避障手段。
+`/local_costmap/published_footprint` 对齐。这一版碰撞监控使用不含 padding 的
+实测车身轮廓做 0.4s 紧急预测；局部代价地图仍保留 3cm padding，Nav2 和 DWB
+承担主要避障，避免障碍进入 padding 后碰撞监控同时拦截前进、旋转和后退。
 
 恢复顺序已改为“清图→后退10cm→左60°→从左侧跨过原航向到右60°”。
 如果终端出现 `Collision Ahead` 而实际有空间，先保存当时的局部

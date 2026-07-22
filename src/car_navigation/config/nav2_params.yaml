@@ -89,7 +89,8 @@ controller_server:
       max_vel_theta: 1.2        # 原1.0rad/s；继续保证雷达10Hz下有足够扫描重叠
       min_speed_xy: 0.0
       max_speed_xy: 0.22
-      min_speed_theta: 0.0
+      # 实验 bag 中 0.063rad/s 指令无法驱动车体，抬过实车旋转死区。
+      min_speed_theta: 0.15
       # 加速度限制
       acc_lim_x: 1.0
       acc_lim_y: 0.0
