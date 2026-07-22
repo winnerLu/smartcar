@@ -187,8 +187,8 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        # 局部采用折中膨胀范围：比全局0.25m更易通过窄道，同时保留15cm余量。
-        inflation_radius: 0.15
+        # 与全局及 Roadmap 探索代价地图一致，降低局部控制贴墙风险。
+        inflation_radius: 0.25
 
 # ==================== 行为树导航器 ====================
 bt_navigator:
