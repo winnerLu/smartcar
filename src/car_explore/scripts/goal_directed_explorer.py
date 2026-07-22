@@ -195,7 +195,9 @@ class GoalDirectedExplorer(Node):
         robot = self._robot_pose()
         if robot is None:
             return
-        if self.target is not None and self._distance(robot[:2], self.target) <= self.goal_radius:
+        if (self.target is not None and
+                self._distance(robot[:2], self.target) <= self.goal_radius and
+                self._known_free_line_to_target(robot)):
             self._finish(
                 f'Approximate target reached; remaining distance '
                 f'{self._distance(robot[:2], self.target):.2f}m')
@@ -638,6 +640,38 @@ class GoalDirectedExplorer(Node):
                 if value is not None and value >= self.occupied_threshold:
                     return False
         return True
+
+    def _known_free_line_to_target(
+            self, robot: Tuple[float, float, float]) -> bool:
+        """Reject radius-only completion when an obstacle separates the target."""
+        if self.latest_map is None or self.target is None:
+            return False
+        start = self._world_to_map(self.latest_map, robot[0], robot[1])
+        end = self._world_to_map(
+            self.latest_map, self.target[0], self.target[1])
+        if start is None or end is None:
+            return False
+
+        x0, y0 = start
+        x1, y1 = end
+        dx = abs(x1 - x0)
+        dy = abs(y1 - y0)
+        sx = 1 if x0 < x1 else -1
+        sy = 1 if y0 < y1 else -1
+        error = dx - dy
+
+        while True:
+            if not self._is_free(self.latest_map, x0, y0):
+                return False
+            if x0 == x1 and y0 == y1:
+                return True
+            twice_error = 2 * error
+            if twice_error > -dy:
+                error -= dy
+                x0 += sx
+            if twice_error < dx:
+                error += dx
+                y0 += sy
 
     def _known_path_ratio(self, path: Path) -> float:
         if self.latest_map is None or not path.poses:
