@@ -1,0 +1,55 @@
+goal_directed_explorer:
+  ros__parameters:
+    use_sim_time: false
+
+    # 终点相对启动瞬间车体的位置：+X 向前，+Y 向左，单位均为米。
+    # 建议通过 launch 参数 goal_forward / goal_left 覆盖，不要直接改本文件。
+    goal_forward: 3.0
+    goal_left: 0.0
+    goal_radius: 0.45
+
+    map_topic: /map
+    map_frame: map
+    base_frame: base_link
+    planner_id: GridBased
+
+    # 等待 SLAM/TF/导航栈稳定后再记录起点，避免把启动瞬态当成比赛坐标系。
+    start_delay: 4.0
+    planning_period: 1.0
+    mission_timeout: 300.0
+    waypoint_progress_timeout: 25.0
+    min_progress: 0.10
+
+    # OccupancyGrid 判定阈值。
+    free_threshold: 20
+    occupied_threshold: 65
+
+    # Frontier 过滤和候选终点设置。
+    min_frontier_size: 0.25
+    frontier_goal_offset: 0.15
+    endpoint_clearance: 0.14
+    candidates_per_cluster: 3
+    candidate_separation: 0.60
+    max_candidates: 10
+
+    # 优先尝试终点方向 +/-60deg，再放宽到 +/-120deg，最后才考虑反方向。
+    primary_cone_deg: 60.0
+    fallback_cone_deg: 120.0
+
+    # 分数越大越优先：推进终点和信息增益为正，行驶/转角/重复路径为负。
+    target_progress_weight: 5.0
+    information_gain_weight: 1.2
+    travel_cost_weight: 1.0
+    heading_cost_weight: 0.7
+    revisit_cost_weight: 2.0
+
+    # 终点必须已经出现在地图自由区内，且 Nav2 路径至少 85% 位于已知区，
+    # 才从 Frontier 导航切换为直达终点，避免 A* 借 allow_unknown 穿墙猜路。
+    direct_path_known_ratio: 0.85
+
+    # 导航失败目标的抑制和死胡同回退。
+    blacklist_duration: 30.0
+    blacklist_radius: 0.35
+    breadcrumb_spacing: 0.60
+    max_breadcrumbs: 30
+    retry_wait: 2.0
