@@ -5,3 +5,9 @@ repositories:
     url: git@github.com:robo-friends/m-explore-ros2.git
     # 已核对支持 ROS 2 Humble；固定提交保证 WSL 和香橙派构建一致。
     version: 326cf8a0b487c34246bb8f3326afbcd69576dc60
+  frontier_exploration_ros2:
+    type: git
+    # WFD + MRTSP 实验探索器；v1.6.1 明确支持 ROS 2 Humble。
+    url: git@github.com:mertgulerx/frontier_exploration_ros2.git
+    # 固定 v1.6.1 对应提交，避免上游参数接口变化影响实车测试。
+    version: b0fad500e5c81ad3154f0469ca283b2702a3f90c
