@@ -22,7 +22,9 @@ roadmap_explorer_node:
       CountBasedGain:
         plugin_type: "roadmap_explorer::CountBasedGain"
         # LD19 为 360 度雷达；限制收益计算半径，控制香橙派计算量。
-        max_camera_depth: 3.5
+        # 两米足够覆盖当前赛场局部可见区，并降低每个 frontier 的射线计算量。
+        # 射线终点还会在插件内截断至不断扩张的 SLAM 地图边界。
+        max_camera_depth: 2.0
         delta_theta: 0.10
         camera_fov: 6.283185307
         factor_of_max_is_min: 0.30

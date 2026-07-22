@@ -24,6 +24,27 @@
 namespace roadmap_explorer
 {
 
+namespace
+{
+void clampToCostmapInterior(
+  const nav2_costmap_2d::Costmap2D * costmap, double & wx, double & wy)
+{
+  // worldToMap() rejects coordinates on the exclusive upper map boundary.
+  // Keep ray endpoints at the centre of the outermost valid cells so a small
+  // or newly-resized SLAM map cannot abort information-gain initialization.
+  const double half_cell = costmap->getResolution() * 0.5;
+  const double min_x = costmap->getOriginX() + half_cell;
+  const double min_y = costmap->getOriginY() + half_cell;
+  const double max_x =
+    costmap->getOriginX() + costmap->getSizeInMetersX() - half_cell;
+  const double max_y =
+    costmap->getOriginY() + costmap->getSizeInMetersY() - half_cell;
+
+  wx = std::clamp(wx, min_x, max_x);
+  wy = std::clamp(wy, min_y, max_y);
+}
+}  // namespace
+
 CountBasedGain::CountBasedGain()
 {
   LOG_INFO("CountBasedGain::CountBasedGain");
@@ -116,6 +137,8 @@ void CountBasedGain::setInformationGainForFrontier(
           polygon_xy_min_max[3],
           std::min(
             exploration_costmap_->getOriginY() + exploration_costmap_->getSizeInMetersY(), wy))));
+
+    clampToCostmapInterior(exploration_costmap_, wx, wy);
 
     if (!getTracedCells(sx, sy, wx, wy, cell_gatherer, max_length, exploration_costmap_)) {
       frontier->setArrivalInformation(0.0);
@@ -213,11 +236,12 @@ double CountBasedGain::setArrivalInformationLimits()
     wx = sx + (MAX_CAMERA_DEPTH * cos(theta));
     wy = sy + (MAX_CAMERA_DEPTH * sin(theta));
 
+    clampToCostmapInterior(exploration_costmap_, wx, wy);
+
     if (!getTracedCells(sx, sy, wx, wy, cell_gatherer, max_length, exploration_costmap_)) {
-      LOG_ERROR("Error in raytracing. Cannot set arrival information limits.");
-      LOG_ERROR("Max length is: " << max_length);
-      throw RoadmapExplorerException(
-              "Error in raytracing. Cannot set arrival information limits.");
+      LOG_WARN("Skipping an invalid ray while setting arrival information limits.");
+      information_along_ray.push_back(0);
+      continue;
     }
 
     auto info_addition = cell_gatherer.getCells();
