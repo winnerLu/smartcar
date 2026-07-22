@@ -94,7 +94,8 @@ roadmap_explorer_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         enabled: true
-        inflation_radius: 0.15
+        # 与 Nav2 全局代价地图保持一致，减少 roadmap 选择贴近已知墙面的目标。
+        inflation_radius: 0.25
         cost_scaling_factor: 3.0
         inflate_unknown: false
         inflate_around_unknown: false
