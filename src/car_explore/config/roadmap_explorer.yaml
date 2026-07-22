@@ -51,6 +51,19 @@ roadmap_explorer_node:
       # 新目标至少好 15% 才切换，减少频繁取消 Nav2 目标。
       goal_hysteresis_threshold: 0.15
 
+    # 终点相对 Roadmap 第一次决策时的小车姿态：+X 向前，+Y 向左。
+    # launch 中的 goal_forward / goal_left 会覆盖这里的默认值。
+    goalDirected:
+      enabled: true
+      goal_forward: 3.0
+      goal_left: 0.0
+      primary_cone_deg: 60.0
+      fallback_cone_deg: 120.0
+      target_progress_weight: 5.0
+      information_gain_weight: 1.2
+      travel_cost_weight: 1.0
+      heading_cost_weight: 0.7
+
     explorationBT:
       bt_sleep_ms: 100
       # 20m x 20m 的保护边界，覆盖当前赛场且避免错误前沿无限扩张。
@@ -94,9 +107,32 @@ roadmap_explorer_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         enabled: true
-        # 与 Nav2 全局代价地图保持一致，减少 roadmap 选择贴近已知墙面的目标。
-        inflation_radius: 0.25
+        # Roadmap 自身只负责筛选 Frontier，保持0.15m避免把未知边界全部过滤掉；
+        # 真正行驶仍由 Nav2 0.25m 膨胀层和完整 footprint 做碰撞约束。
+        inflation_radius: 0.15
         cost_scaling_factor: 3.0
         inflate_unknown: false
         inflate_around_unknown: false
       always_send_full_costmap: false
+
+roadmap_explore_mission:
+  ros__parameters:
+    use_sim_time: false
+    map_frame: map
+    base_frame: base_link
+    map_topic: /map
+    planner_id: GridBased
+    start_delay: 5.0
+    return_to_start: false
+    goal_directed_mode: true
+    goal_forward: 3.0
+    goal_left: 0.0
+    goal_radius: 0.25
+    # 半径内落点必须与标称终点间无遮挡；隔墙不会因欧氏距离近而提前完成。
+    # 只有目标位于已知安全自由区，且Nav2路径至少85%已知，才停止Roadmap探索。
+    direct_path_known_ratio: 0.85
+    direct_check_period: 1.0
+    mission_timeout: 300.0
+    free_threshold: 20
+    occupied_threshold: 65
+    endpoint_clearance: 0.14

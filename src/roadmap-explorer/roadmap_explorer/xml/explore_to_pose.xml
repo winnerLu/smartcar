@@ -1,29 +1,38 @@
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
-    <PipelineSequence name="NavigateWithReplanning">
-      <!-- Please make sure that this frequency is not close to the bt loop duration. It can result in an undetermined number of retries-->
-      <!-- For example, if this is 1 Hz, loop duration must be much less than 100ms. (Possibly 60-70ms)-->
-      <!-- Orange Pi 4A: 1 Hz matches the existing Nav2 setup and avoids
-           saturating planner_server while SLAM is publishing a growing map. -->
-      <RateController hz="1.0">
-        <RecoveryNode number_of_retries="3" name="ComputePathToPose">
-          <ReactiveSequence>
-            <PlannerSelector selected_planner="{selected_planner}" default_planner="GridBased" topic_name="planner_selector"/>
-            <GoalUpdater input_goal="{goal}" output_goal="{updated_goal}">
-              <ComputePathToPose goal="{updated_goal}" path="{path}" planner_id="{selected_planner}"/>
-            </GoalUpdater>
-            <!-- <SmoothPath unsmoothed_path="{path}" smoothed_path="{path}"/> -->
-          </ReactiveSequence>
-          <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
-        </RecoveryNode>
-      </RateController>
-      <RecoveryNode number_of_retries="6" name="FollowPath">
-        <ReactiveSequence>
-          <ControllerSelector selected_controller="{selected_controller}" default_controller="FollowPath" topic_name="controller_selector"/>
-          <FollowPath path="{path}" controller_id="{selected_controller}"/>
-        </ReactiveSequence>
-        <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
-      </RecoveryNode>
-    </PipelineSequence>
+    <RecoveryNode number_of_retries="4" name="RoadmapNavigateRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <!-- Orange Pi 4A: 1Hz avoids saturating planner_server on a growing map. -->
+        <RateController hz="1.0">
+          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+            <ReactiveSequence>
+              <PlannerSelector selected_planner="{selected_planner}"
+                default_planner="GridBased" topic_name="planner_selector"/>
+              <GoalUpdater input_goal="{goal}" output_goal="{updated_goal}">
+                <ComputePathToPose goal="{updated_goal}" path="{path}"
+                  planner_id="{selected_planner}" server_timeout="2000"/>
+              </GoalUpdater>
+            </ReactiveSequence>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Context"
+              service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+        <FollowPath path="{path}" controller_id="FollowPath" server_timeout="2000"/>
+      </PipelineSequence>
+      <ReactiveFallback name="RoadmapRecoveryFallback">
+        <GoalUpdated/>
+        <RoundRobin name="RoadmapRecoveryActions">
+          <Sequence name="ClearBothCostmaps">
+            <ClearEntireCostmap name="ClearLocalCostmap-Recovery"
+              service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Recovery"
+              service_name="global_costmap/clear_entirely_global_costmap"/>
+          </Sequence>
+          <BackUp name="ShortBackUp" backup_dist="0.10" backup_speed="0.05"/>
+          <Spin name="SpinLeft60" spin_dist="1.0472"/>
+          <Spin name="SpinAcrossToRight60" spin_dist="-2.0944"/>
+        </RoundRobin>
+      </ReactiveFallback>
+    </RecoveryNode>
   </BehaviorTree>
 </root>

@@ -119,6 +119,45 @@ void ParameterHandler::makeParameters(std::shared_ptr<nav2_util::LifecycleNode> 
   parameter_map_["fullPathOptimizer.goal_hysteresis_threshold"] = node->get_parameter(
     "fullPathOptimizer.goal_hysteresis_threshold").as_double();
 
+  // --- goalDirected ---
+  nav2_util::declare_parameter_if_not_declared(
+    node, "goalDirected.enabled", rclcpp::ParameterValue(false));
+  nav2_util::declare_parameter_if_not_declared(
+    node, "goalDirected.goal_forward", rclcpp::ParameterValue(3.0));
+  nav2_util::declare_parameter_if_not_declared(
+    node, "goalDirected.goal_left", rclcpp::ParameterValue(0.0));
+  nav2_util::declare_parameter_if_not_declared(
+    node, "goalDirected.primary_cone_deg", rclcpp::ParameterValue(60.0));
+  nav2_util::declare_parameter_if_not_declared(
+    node, "goalDirected.fallback_cone_deg", rclcpp::ParameterValue(120.0));
+  nav2_util::declare_parameter_if_not_declared(
+    node, "goalDirected.target_progress_weight", rclcpp::ParameterValue(5.0));
+  nav2_util::declare_parameter_if_not_declared(
+    node, "goalDirected.information_gain_weight", rclcpp::ParameterValue(1.2));
+  nav2_util::declare_parameter_if_not_declared(
+    node, "goalDirected.travel_cost_weight", rclcpp::ParameterValue(1.0));
+  nav2_util::declare_parameter_if_not_declared(
+    node, "goalDirected.heading_cost_weight", rclcpp::ParameterValue(0.7));
+
+  parameter_map_["goalDirected.enabled"] = node->get_parameter(
+    "goalDirected.enabled").as_bool();
+  parameter_map_["goalDirected.goal_forward"] = node->get_parameter(
+    "goalDirected.goal_forward").as_double();
+  parameter_map_["goalDirected.goal_left"] = node->get_parameter(
+    "goalDirected.goal_left").as_double();
+  parameter_map_["goalDirected.primary_cone_deg"] = node->get_parameter(
+    "goalDirected.primary_cone_deg").as_double();
+  parameter_map_["goalDirected.fallback_cone_deg"] = node->get_parameter(
+    "goalDirected.fallback_cone_deg").as_double();
+  parameter_map_["goalDirected.target_progress_weight"] = node->get_parameter(
+    "goalDirected.target_progress_weight").as_double();
+  parameter_map_["goalDirected.information_gain_weight"] = node->get_parameter(
+    "goalDirected.information_gain_weight").as_double();
+  parameter_map_["goalDirected.travel_cost_weight"] = node->get_parameter(
+    "goalDirected.travel_cost_weight").as_double();
+  parameter_map_["goalDirected.heading_cost_weight"] = node->get_parameter(
+    "goalDirected.heading_cost_weight").as_double();
+
   // --- explorationBT ---
   nav2_util::declare_parameter_if_not_declared(
     node, "explorationBT.bt_sleep_ms", rclcpp::ParameterValue(

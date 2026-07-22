@@ -24,6 +24,7 @@
 
 #include <vector>
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 #include <visualization_msgs/msg/marker_array.hpp>
@@ -175,6 +176,20 @@ private:
     SortedFrontiers & sortedFrontiers, std::vector<FrontierPtr> & bestPath,
     geometry_msgs::msg::PoseStamped & robotP);
 
+  void initializeGoalTarget(const geometry_msgs::msg::PoseStamped & robot_pose);
+
+  bool getGoalDirectedFrontier(
+    std::vector<FrontierPtr> & frontier_list, FrontierPtr & next_frontier,
+    const geometry_msgs::msg::PoseStamped & robot_pose, bool current_goal_valid);
+
+  double calculateGoalDirectedScore(
+    const FrontierPtr & frontier, const geometry_msgs::msg::PoseStamped & robot_pose,
+    double min_information, double max_information) const;
+
+  int calculateGoalConeStage(
+    const FrontierPtr & frontier,
+    const geometry_msgs::msg::PoseStamped & robot_pose) const;
+
   std::shared_ptr<nav2_util::LifecycleNode> node_;
   std::shared_ptr<nav2_costmap_2d::Costmap2DROS> explore_costmap_ros_;
   rclcpp_lifecycle::LifecyclePublisher<visualization_msgs::msg::MarkerArray>::SharedPtr
@@ -194,6 +209,20 @@ private:
 
   // Hysteresis parameters
   double goal_hysteresis_threshold_ = 0.15;  // New goal must be 15% better to switch
+
+  // Optional target-directed mode. The final target is expressed in the robot's
+  // starting frame (+X forward, +Y left) and converted to map coordinates once.
+  bool goal_directed_mode_ = false;
+  bool goal_target_initialized_ = false;
+  double goal_forward_ = 3.0;
+  double goal_left_ = 0.0;
+  double primary_cone_rad_ = 1.0471975511965976;
+  double fallback_cone_rad_ = 2.0943951023931953;
+  double target_progress_weight_ = 5.0;
+  double information_gain_weight_ = 1.2;
+  double travel_cost_weight_ = 1.0;
+  double heading_cost_weight_ = 0.7;
+  geometry_msgs::msg::Point goal_target_;
 
   // Constants for path optimization
   static constexpr double PATH_NOT_FOUND_PENALTY_MULTIPLIER = 100000.0;

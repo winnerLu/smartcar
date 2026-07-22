@@ -26,6 +26,11 @@
 #include "roadmap_explorer/FullPathOptimizer.hpp"
 namespace roadmap_explorer
 {
+namespace
+{
+constexpr double kPi = 3.14159265358979323846;
+}
+
 FullPathOptimizer::FullPathOptimizer(
   std::shared_ptr<nav2_util::LifecycleNode> node,
   std::shared_ptr<nav2_costmap_2d::Costmap2DROS> explore_costmap_ros)
@@ -41,6 +46,21 @@ FullPathOptimizer::FullPathOptimizer(
     "fullPathOptimizer.add_distance_to_robot_to_tsp");
   goal_hysteresis_threshold_ = parameterInstance.getValue<double>(
     "fullPathOptimizer.goal_hysteresis_threshold");
+  goal_directed_mode_ = parameterInstance.getValue<bool>("goalDirected.enabled");
+  goal_forward_ = parameterInstance.getValue<double>("goalDirected.goal_forward");
+  goal_left_ = parameterInstance.getValue<double>("goalDirected.goal_left");
+  primary_cone_rad_ = parameterInstance.getValue<double>(
+    "goalDirected.primary_cone_deg") * kPi / 180.0;
+  fallback_cone_rad_ = parameterInstance.getValue<double>(
+    "goalDirected.fallback_cone_deg") * kPi / 180.0;
+  target_progress_weight_ = parameterInstance.getValue<double>(
+    "goalDirected.target_progress_weight");
+  information_gain_weight_ = parameterInstance.getValue<double>(
+    "goalDirected.information_gain_weight");
+  travel_cost_weight_ = parameterInstance.getValue<double>(
+    "goalDirected.travel_cost_weight");
+  heading_cost_weight_ = parameterInstance.getValue<double>(
+    "goalDirected.heading_cost_weight");
 
   explore_costmap_ros_ = explore_costmap_ros;
   local_search_area_publisher_ = node_->create_publisher<visualization_msgs::msg::MarkerArray>(
@@ -384,18 +404,27 @@ bool FullPathOptimizer::getNextGoal(
   bool current_goal_valid = false;
   if (has_committed_goal_ && current_committed_goal_) {
     // Check if the committed goal still exists in the frontier list and is valid
-    auto it = std::find_if(frontier_list.begin(), frontier_list.end(),
-      [this](const FrontierPtr& f) {
+    auto it = std::find_if(
+      frontier_list.begin(), frontier_list.end(),
+      [this](const FrontierPtr & f) {
         return f->getUID() == current_committed_goal_->getUID();
       });
 
     if (it != frontier_list.end() && (*it)->isAchievable() && !(*it)->isBlacklisted()) {
       current_goal_valid = true;
-      LOG_INFO("Current committed goal is still valid (UID: " << current_committed_goal_->getUID() << ")");
+      LOG_INFO(
+        "Current committed goal is still valid (UID: " << current_committed_goal_->getUID() <<
+          ")");
     } else {
       LOG_INFO("Current committed goal is no longer valid - will compute new goal");
       has_committed_goal_ = false;
     }
+  }
+
+  if (goal_directed_mode_) {
+    initializeGoalTarget(robotP);
+    return getGoalDirectedFrontier(
+      frontier_list, nextFrontier, robotP, current_goal_valid);
   }
 
   SortedFrontiers sortedFrontiers;
@@ -481,34 +510,42 @@ bool FullPathOptimizer::getNextGoal(
     robotPoseFrontier->setGoalPoint(robotP.pose.position.x, robotP.pose.position.y);
     robotPoseFrontier->setUID(generateUID(robotPoseFrontier));
 
-    double cost_to_current_goal = calculateLengthRobotToGoal(robotPoseFrontier, current_committed_goal_);
+    double cost_to_current_goal = calculateLengthRobotToGoal(
+      robotPoseFrontier,
+      current_committed_goal_);
     double cost_to_new_goal = calculateLengthRobotToGoal(robotPoseFrontier, candidateGoal);
 
     // Calculate improvement ratio
     double improvement = (cost_to_current_goal - cost_to_new_goal) / cost_to_current_goal;
 
-    LOG_INFO("Hysteresis check - Current goal cost: " << cost_to_current_goal <<
-             ", New goal cost: " << cost_to_new_goal <<
-             ", Improvement: " << (improvement * 100.0) << "%");
+    LOG_INFO(
+      "Hysteresis check - Current goal cost: " << cost_to_current_goal <<
+        ", New goal cost: " << cost_to_new_goal <<
+        ", Improvement: " << (improvement * 100.0) << "%");
 
     if (improvement >= goal_hysteresis_threshold_) {
       // New goal is significantly better - switch to it
-      LOG_INFO("New goal is " << (improvement * 100.0) << "% better (threshold: " <<
-               (goal_hysteresis_threshold_ * 100.0) << "%) - switching goals");
-      LOG_INFO("Switching from goal UID " << current_committed_goal_->getUID() <<
-               " to " << candidateGoal->getUID());
+      LOG_INFO(
+        "New goal is " << (improvement * 100.0) << "% better (threshold: " <<
+          (goal_hysteresis_threshold_ * 100.0) << "%) - switching goals");
+      LOG_INFO(
+        "Switching from goal UID " << current_committed_goal_->getUID() <<
+          " to " << candidateGoal->getUID());
       current_committed_goal_ = candidateGoal;
       current_goal_path_cost_ = cost_to_new_goal;
       nextFrontier = candidateGoal;
     } else {
       // Stick with current goal
-      LOG_INFO("Sticking with current goal (improvement " << (improvement * 100.0) <<
-               "% below threshold " << (goal_hysteresis_threshold_ * 100.0) << "%)");
+      LOG_INFO(
+        "Sticking with current goal (improvement " << (improvement * 100.0) <<
+          "% below threshold " << (goal_hysteresis_threshold_ * 100.0) << "%)");
       nextFrontier = current_committed_goal_;
     }
   } else {
     // No current goal or it became invalid - commit to the new candidate
-    LOG_INFO("No valid committed goal - committing to new goal (UID: " << candidateGoal->getUID() << ")");
+    LOG_INFO(
+      "No valid committed goal - committing to new goal (UID: " << candidateGoal->getUID() <<
+        ")");
     current_committed_goal_ = candidateGoal;
     has_committed_goal_ = true;
     FrontierPtr robotPoseFrontier = std::make_shared<Frontier>();
@@ -518,6 +555,176 @@ bool FullPathOptimizer::getNextGoal(
     nextFrontier = candidateGoal;
   }
 
+  return true;
+}
+
+void FullPathOptimizer::initializeGoalTarget(
+  const geometry_msgs::msg::PoseStamped & robot_pose)
+{
+  if (goal_target_initialized_) {
+    return;
+  }
+
+  const double start_yaw = quatToEuler(robot_pose.pose.orientation)[2];
+  goal_target_.x = robot_pose.pose.position.x +
+    std::cos(start_yaw) * goal_forward_ - std::sin(start_yaw) * goal_left_;
+  goal_target_.y = robot_pose.pose.position.y +
+    std::sin(start_yaw) * goal_forward_ + std::cos(start_yaw) * goal_left_;
+  goal_target_.z = 0.0;
+  goal_target_initialized_ = true;
+
+  LOG_INFO(
+    "Goal-directed Roadmap target initialized at (" << goal_target_.x << ", " <<
+      goal_target_.y << ") from relative target (forward=" << goal_forward_ <<
+      ", left=" << goal_left_ << ")");
+}
+
+int FullPathOptimizer::calculateGoalConeStage(
+  const FrontierPtr & frontier,
+  const geometry_msgs::msg::PoseStamped & robot_pose) const
+{
+  const double target_bearing = std::atan2(
+    goal_target_.y - robot_pose.pose.position.y,
+    goal_target_.x - robot_pose.pose.position.x);
+  const double frontier_bearing = std::atan2(
+    frontier->getGoalPoint().y - robot_pose.pose.position.y,
+    frontier->getGoalPoint().x - robot_pose.pose.position.x);
+  const double heading_error = std::abs(
+    std::atan2(
+      std::sin(frontier_bearing - target_bearing),
+      std::cos(frontier_bearing - target_bearing)));
+
+  if (heading_error <= primary_cone_rad_) {
+    return 0;
+  }
+  if (heading_error <= fallback_cone_rad_) {
+    return 1;
+  }
+  return 2;
+}
+
+double FullPathOptimizer::calculateGoalDirectedScore(
+  const FrontierPtr & frontier,
+  const geometry_msgs::msg::PoseStamped & robot_pose,
+  double min_information, double max_information) const
+{
+  const double current_target_distance = distanceBetweenPoints(
+    robot_pose.pose.position, goal_target_);
+  const double frontier_target_distance = distanceBetweenPoints(
+    frontier->getGoalPoint(), goal_target_);
+  const double progress = current_target_distance - frontier_target_distance;
+
+  const double target_bearing = std::atan2(
+    goal_target_.y - robot_pose.pose.position.y,
+    goal_target_.x - robot_pose.pose.position.x);
+  const double frontier_bearing = std::atan2(
+    frontier->getGoalPoint().y - robot_pose.pose.position.y,
+    frontier->getGoalPoint().x - robot_pose.pose.position.x);
+  const double heading_error = std::abs(
+    std::atan2(
+      std::sin(frontier_bearing - target_bearing),
+      std::cos(frontier_bearing - target_bearing)));
+
+  double normalized_information = 0.0;
+  if (max_information > min_information) {
+    normalized_information =
+      (frontier->getArrivalInformation() - min_information) /
+      (max_information - min_information);
+  }
+
+  return target_progress_weight_ * progress +
+         information_gain_weight_ * normalized_information -
+         travel_cost_weight_ * frontier->getPathLengthInM() -
+         heading_cost_weight_ * heading_error;
+}
+
+bool FullPathOptimizer::getGoalDirectedFrontier(
+  std::vector<FrontierPtr> & frontier_list, FrontierPtr & next_frontier,
+  const geometry_msgs::msg::PoseStamped & robot_pose, bool current_goal_valid)
+{
+  std::vector<FrontierPtr> candidates;
+  double min_information = std::numeric_limits<double>::max();
+  double max_information = -std::numeric_limits<double>::max();
+  for (const auto & frontier : frontier_list) {
+    if (!frontier->isAchievable() || frontier->isBlacklisted() ||
+      !std::isfinite(frontier->getPathLengthInM()))
+    {
+      continue;
+    }
+    candidates.push_back(frontier);
+    min_information = std::min(min_information, frontier->getArrivalInformation());
+    max_information = std::max(max_information, frontier->getArrivalInformation());
+  }
+
+  if (candidates.empty()) {
+    LOG_WARN("Goal-directed Roadmap found no achievable frontier candidates.");
+    has_committed_goal_ = false;
+    return false;
+  }
+
+  auto candidate_better = [this, &robot_pose, min_information, max_information](
+    const FrontierPtr & lhs, const FrontierPtr & rhs)
+    {
+      const int lhs_stage = calculateGoalConeStage(lhs, robot_pose);
+      const int rhs_stage = calculateGoalConeStage(rhs, robot_pose);
+      if (lhs_stage != rhs_stage) {
+        return lhs_stage < rhs_stage;
+      }
+      return calculateGoalDirectedScore(
+        lhs, robot_pose, min_information, max_information) >
+             calculateGoalDirectedScore(
+        rhs, robot_pose, min_information, max_information);
+    };
+  FrontierPtr candidate = candidates.front();
+  for (const auto & frontier : candidates) {
+    if (candidate_better(frontier, candidate)) {
+      candidate = frontier;
+    }
+  }
+
+  FrontierPtr selected = candidate;
+  if (current_goal_valid) {
+    auto current_it = std::find_if(
+      candidates.begin(), candidates.end(), [this](const FrontierPtr & frontier) {
+        return frontier->getUID() == current_committed_goal_->getUID();
+      });
+    if (current_it != candidates.end()) {
+      FrontierPtr current = *current_it;
+      const int candidate_stage = calculateGoalConeStage(candidate, robot_pose);
+      const int current_stage = calculateGoalConeStage(current, robot_pose);
+      const double candidate_score = calculateGoalDirectedScore(
+        candidate, robot_pose, min_information, max_information);
+      const double current_score = calculateGoalDirectedScore(
+        current, robot_pose, min_information, max_information);
+      const double required_improvement = goal_hysteresis_threshold_ *
+        std::max(1.0, std::abs(current_score));
+
+      if (current_stage < candidate_stage ||
+        (current_stage == candidate_stage &&
+        candidate_score <= current_score + required_improvement))
+      {
+        selected = current;
+      }
+    }
+  }
+
+  const double selected_score = calculateGoalDirectedScore(
+    selected, robot_pose, min_information, max_information);
+  const int selected_stage = calculateGoalConeStage(selected, robot_pose);
+  const double target_yaw = std::atan2(
+    goal_target_.y - selected->getGoalPoint().y,
+    goal_target_.x - selected->getGoalPoint().x);
+  selected->setGoalOrientation(target_yaw);
+
+  current_committed_goal_ = selected;
+  current_goal_path_cost_ = selected->getPathLengthInM();
+  has_committed_goal_ = true;
+  next_frontier = selected;
+  LOG_INFO(
+    "Goal-directed Roadmap selected frontier (" << selected->getGoalPoint().x << ", " <<
+      selected->getGoalPoint().y << "), cone_stage=" << selected_stage <<
+      ", score=" << selected_score << ", target_distance=" <<
+      distanceBetweenPoints(selected->getGoalPoint(), goal_target_));
   return true;
 }
 
