@@ -56,14 +56,18 @@ frontier_explorer:
     # 不在行驶中频繁抢占目标；对连续失败或长时间无进展的 Frontier
     # 暂时抑制，避免在同一不可达目标上反复清图和恢复。
     goal_preemption_enabled: false
-    goal_skip_on_blocked_goal: true
+    # 不在发送前按目标点单格代价直接跳过。局部 costmap 中 cost=99
+    # 的 Frontier 否则会每秒被重选却永远不派发，也无法进入失败抑制。
+    # 交给 Nav2 利用规划容差选附近可达点；失败后再由下方抑制机制处理。
+    goal_skip_on_blocked_goal: false
     frontier_suppression_enabled: true
     frontier_suppression_attempt_threshold: 2
     frontier_suppression_no_progress_timeout_s: 12.0
     frontier_suppression_progress_epsilon_m: 0.10
     frontier_suppression_timeout_s: 60.0
     frontier_suppression_startup_grace_period_s: 15.0
-    all_frontiers_suppressed_behavior: stay
+    # 如果当前仅剩被抑制的目标，返回起点等待地图更新，避免原地空等。
+    all_frontiers_suppressed_behavior: return_to_start
 
     # 到达一个 Frontier 后稍等一帧地图更新，避免立即基于旧地图选新目标。
     post_goal_settle_enabled: true

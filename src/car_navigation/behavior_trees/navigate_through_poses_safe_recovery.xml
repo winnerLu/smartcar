@@ -1,21 +1,22 @@
 <!--
-  NavigateThroughPoses 安全恢复树，与 NavigateToPose 使用相同的受限倒车策略。
+  NavigateThroughPoses 安全恢复树，与 NavigateToPose 使用相同的恢复策略。
 -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
-    <RecoveryNode number_of_retries="5" name="NavigateRecovery">
+    <RecoveryNode number_of_retries="4" name="NavigateRecovery">
       <PipelineSequence name="NavigateWithReplanning">
         <RateController hz="0.333">
           <RecoveryNode number_of_retries="1" name="ComputePathThroughPoses">
             <ReactiveSequence>
               <RemovePassedGoals input_goals="{goals}" output_goals="{goals}" radius="0.7"/>
-              <ComputePathThroughPoses goals="{goals}" path="{path}" planner_id="GridBased"/>
+              <ComputePathThroughPoses goals="{goals}" path="{path}" planner_id="GridBased"
+                server_timeout="2000"/>
             </ReactiveSequence>
             <ClearEntireCostmap name="ClearGlobalCostmap-Context"
               service_name="global_costmap/clear_entirely_global_costmap"/>
           </RecoveryNode>
         </RateController>
-        <FollowPath path="{path}" controller_id="FollowPath"/>
+        <FollowPath path="{path}" controller_id="FollowPath" server_timeout="2000"/>
       </PipelineSequence>
       <ReactiveFallback name="RecoveryFallback">
         <GoalUpdated/>
@@ -26,10 +27,9 @@
             <ClearEntireCostmap name="ClearGlobalCostmap-Subtree"
               service_name="global_costmap/clear_entirely_global_costmap"/>
           </Sequence>
-          <Spin name="SpinLeft" spin_dist="1.57"/>
-          <Spin name="SpinRight" spin_dist="-1.57"/>
-          <BackUp backup_dist="0.12" backup_speed="0.08"/>
-          <Wait wait_duration="2"/>
+          <BackUp name="ShortBackUp" backup_dist="0.10" backup_speed="0.05"/>
+          <Spin name="SpinLeft60" spin_dist="1.0472"/>
+          <Spin name="SpinAcrossToRight60" spin_dist="-2.0944"/>
         </RoundRobin>
       </ReactiveFallback>
     </RecoveryNode>
