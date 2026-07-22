@@ -1,0 +1,7 @@
+Repository: https://github.com/suchetanrs/roadmap-explorer
+Commit: 203ff2602e1a1e41eec7ef663eacc21266e270c6
+
+Local compatibility changes:
+- Preserve the smart car's measured Nav2 footprint instead of forcing a 0.10 m radius.
+- Reduce the per-goal global replanning rate from 10 Hz to 1 Hz for Orange Pi 4A.
+- Disable comparison tools and tests by default to reduce embedded build time and peak memory.
