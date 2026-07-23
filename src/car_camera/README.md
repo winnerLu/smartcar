@@ -7,7 +7,7 @@
 | 节点 | 功能 | 主要输出 |
 |---|---|---|
 | `car_camera_node` | USB 相机采集和已标定内参发布 | `/camera/image_raw`, `/camera/camera_info` |
-| `apriltag_detector_node` | 检测 tag36h11 ID 0–7 并估算停车板物理中心 | `/apriltag_detector/tag_pose`, `/apriltag_detector/visible_tag_count`, TF `camera_optical_frame→parking_board` |
+| `apriltag_detector_node` | 检测 tag36h11 ID 0–7 并联合估算整板位姿 | `/apriltag_detector/tag_pose`, `visible_tag_count`, `visible_tag_ids`, `reprojection_error`, `inlier_count`, TF `camera_optical_frame→parking_board` |
 | `board_parker.py` | 四个方向等价的低速停车控制器 | `/cmd_vel_dock`, `/board_parker/parking_complete` |
 | `tag_follower.py` | 旧版单标签跟随控制器，仅保留作对比 | `/cmd_vel_dock` |
 
@@ -65,6 +65,8 @@ ros2 launch car_camera board_parking.launch.py \
 source ~/robot_ws/install/setup.bash
 ros2 topic hz /camera/image_raw
 ros2 topic echo /apriltag_detector/tag_pose
+ros2 topic echo /apriltag_detector/reprojection_error
+ros2 topic echo /apriltag_detector/visible_tag_ids
 ros2 topic hz /cmd_vel_dock
 ```
 
@@ -82,8 +84,8 @@ ros2 launch car_camera board_parking.launch.py \
   parking_enabled:=true \
   target_forward:=0.082 \
   target_left:=0.0 \
-  max_linear:=0.03 \
-  max_angular:=0.20
+  max_linear:=0.05 \
+  max_angular:=0.30
 ```
 
 下视相机的 `z` 是镜头离地高度，不能作为前进距离。节点会先把板位姿
@@ -109,7 +111,10 @@ ros2 service call /board_parker/set_enabled \
 - 视觉泊车发布 `/cmd_vel_dock`，优先级 100。
 - 检测可以始终运行；未激活的 `board_parker` 不发布速度。
 - 激活时控制器先发布零速，再等待一帧新的停车板位姿。
-- 标签位姿超过 `loss_timeout` 未更新时，泊车控制器持续发布零速。
+- 一个有效 Tag 也能根据唯一 ID 和板内偏移反推出整板位姿，但使用较低
+  速度和更长的完成稳定时间。
+- 两个及以上 Tag 使用所有角点统一 `solvePnPRansac` 并细化位姿。
+- 标签位姿或质量话题超过 `loss_timeout` 未更新时立即发布零速。
 - 达标后 `/board_parker/parking_complete` 变为 `true`，并保持零速。
 - 上层任务收到完成状态后必须关闭 `board_parker`，让 `twist_mux`
   超时释放泊车输入。
@@ -121,16 +126,19 @@ ros2 service call /board_parker/set_enabled \
 |---|---:|---|---|
 | `target_forward` | `0.082` | m | 停车板中心在 `base_link` 前方的目标位置 |
 | `target_left` | `0.0` | m | 停车板中心在 `base_link` 左侧的目标位置 |
-| `min_visible_tags` | `3` | 个 | 允许控制所需的最少稳定标签数 |
+| `min_visible_tags` | `1` | 个 | 唯一 ID 的单 Tag 可进行降速泊车 |
 | `board_margin` | `0.005` | m | 车体轮廓距离停车板边界的最小余量 |
-| `max_linear` | `0.03` | m/s | 首轮测试最大线速度 |
-| `max_angular` | `0.20` | rad/s | 首轮测试最大角速度 |
-| `forward_tolerance` | `0.012` | m | 前后方向终点容差 |
-| `lateral_tolerance` | `0.012` | m | 左右方向终点容差 |
-| `edge_tolerance_deg` | `10.0` | ° | 最近停车板边缘方向容差 |
+| `max_linear` | `0.05` | m/s | 多 Tag 最大线速度 |
+| `single_tag_max_linear` | `0.025` | m/s | 单 Tag 降级最大线速度 |
+| `max_angular` | `0.30` | rad/s | 多 Tag 最大角速度 |
+| `position_tolerance` | `0.025` | m | 板中心相对车体目标的径向容差 |
+| `edge_tolerance_deg` | `15.0` | ° | 最近停车板边缘方向容差 |
+| `min_footprint_overlap` | `0.90` | — | 宣布完成所需的最小车体覆盖率 |
+| `max_reprojection_error` | `3.0` | px | 整板位姿最大重投影均方根误差 |
 | `loss_timeout` | `0.35` | s | 位姿失效后停车的超时 |
-| `stable_frames` | `8` | 帧 | 连续满足容差后才宣布完成 |
-| `allow_reverse` | `false` | — | 首轮测试禁用倒车 |
+| `stable_frames` | `6` | 帧 | 多 Tag 连续满足容差后宣布完成 |
+| `single_tag_stable_frames` | `12` | 帧 | 单 Tag 完成时的额外稳定确认 |
+| `allow_reverse` | `true` | — | 允许越过目标后做受限倒车修正 |
 
 相机内参文件为 `config/c270_calibration.yaml`，标定分辨率 640×480。
 `tag_size` 是单个 AprilTag 黑色方块实测边长，`board_width` 和

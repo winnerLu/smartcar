@@ -66,3 +66,13 @@ def test_detector_corner_order_uses_image_down_as_positive_board_y():
         '        {half, -half, 0.0f}, {-half, -half, 0.0f},'
     )
     assert expected_mapping in source
+
+
+def test_detector_supports_quality_gated_single_and_multi_tag_board_pose():
+    source = DETECTOR_SOURCE.read_text(encoding='utf-8')
+    assert 'cv::SOLVEPNP_IPPE_SQUARE' in source
+    assert 'cv::solvePnPRansac' in source
+    assert 'cv::solvePnPRefineLM' in source
+    assert '"~/visible_tag_ids"' in source
+    assert '"~/reprojection_error"' in source
+    assert '"~/inlier_count"' in source

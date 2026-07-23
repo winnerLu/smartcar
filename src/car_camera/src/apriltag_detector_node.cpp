@@ -7,13 +7,15 @@
 //
 // 关键设计:
 //   - 基于 AprilRobotics/apriltag C 库,检测 tag36h11 家族。
-//   - 多标签模式(tag_ids="0,1,2,3,4,5,6,7"):取所有可见标签的位姿均值作为停车板中心。
-//   - 单标签模式(tag_ids="0"):与之前行为一致,直接输出标签位姿。
-//   - 位姿估计用 OpenCV solvePnP,每个标签独立解算后融合。
+//   - 已知每个唯一 ID 在板上的位置,只看到一个标签也能反算整板中心。
+//   - 单标签用 IPPE Square;多标签用全部角点统一 RANSAC PnP + LM 细化。
+//   - 发布可见 ID、内点数和重投影误差,供控制器做质量门控。
 //   - CLAHE 增强 + quad_decimate=1.0 保证小标签/低光照检测率。
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -24,7 +26,9 @@
 #include "sensor_msgs/msg/image.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
+#include "std_msgs/msg/float32.hpp"
 #include "std_msgs/msg/u_int32.hpp"
+#include "std_msgs/msg/u_int32_multi_array.hpp"
 #include "tf2_ros/transform_broadcaster.h"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "cv_bridge/cv_bridge.h"
@@ -53,6 +57,12 @@ public:
     board_height_ = declare_parameter<double>("board_height", 0.300);
     publish_tf_ = declare_parameter<bool>("publish_tf", true);
     child_frame_id_ = declare_parameter<std::string>("child_frame_id", "parking_board");
+    max_hamming_ = declare_parameter<int>("max_hamming", 0);
+    min_decision_margin_ = declare_parameter<double>("min_decision_margin", 20.0);
+    ransac_reprojection_error_ =
+      declare_parameter<double>("ransac_reprojection_error", 3.0);
+    max_pose_reprojection_error_ =
+      declare_parameter<double>("max_pose_reprojection_error", 3.0);
 
     // 多标签 ID 列表(逗号分隔,如 "0,1,2,3,4,5,6,7")
     std::string tag_ids_str = declare_parameter<std::string>("tag_ids", "0,1,2,3,4,5,6,7");
@@ -82,6 +92,12 @@ public:
     pose_pub_ = create_publisher<geometry_msgs::msg::PoseStamped>("~/tag_pose", 10);
     visible_count_pub_ =
       create_publisher<std_msgs::msg::UInt32>("~/visible_tag_count", 10);
+    visible_ids_pub_ =
+      create_publisher<std_msgs::msg::UInt32MultiArray>("~/visible_tag_ids", 10);
+    reprojection_error_pub_ =
+      create_publisher<std_msgs::msg::Float32>("~/reprojection_error", 10);
+    inlier_count_pub_ =
+      create_publisher<std_msgs::msg::UInt32>("~/inlier_count", 10);
 
     if (publish_tf_) {
       tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
@@ -176,15 +192,26 @@ private:
     image_u8_t im{enhanced.cols, enhanced.rows, enhanced.cols, enhanced.data};
     zarray_t * detections = apriltag_detector_detect(td_, &im);
 
-    // 收集所有有效标签的相机坐标系位置
-    struct TagPose { double x, y, z, r11,r12,r13,r21,r22,r23,r31,r32,r33; };
+    // Collect both per-tag board poses and all board-corner correspondences.
+    // One tag is sufficient to recover the known board offset.  With two or
+    // more tags, all corners are solved together as one rigid board.
+    struct TagPose {
+      uint32_t id;
+      double x, y, z;
+      double r11, r12, r13, r21, r22, r23, r31, r32, r33;
+    };
     std::vector<TagPose> poses;
+    std::vector<cv::Point3f> board_object_points;
+    std::vector<cv::Point2f> board_image_points;
+    std::vector<uint32_t> visible_ids;
     for (int i = 0; i < zarray_size(detections); ++i) {
       apriltag_detection_t * det = nullptr;
       zarray_get(detections, i, &det);
 
       // 过滤 ID
       if (!target_all_ && valid_ids_.find(det->id) == valid_ids_.end())
+        continue;
+      if (det->hamming > max_hamming_ || det->decision_margin < min_decision_margin_)
         continue;
 
       // 跳过不在板布局上的 ID
@@ -215,7 +242,7 @@ private:
       cv::Mat rvec, tvec;
       if (!cv::solvePnP(
           obj_pts, img_pts, camera_matrix_, dist_coeffs_, rvec, tvec,
-          false, cv::SOLVEPNP_ITERATIVE))
+          false, cv::SOLVEPNP_IPPE_SQUARE))
       {
         RCLCPP_WARN_THROTTLE(
           get_logger(), *get_clock(), 2000,
@@ -234,34 +261,119 @@ private:
       const double cz = tvec.at<double>(2,0) - (r31 * to_x + r32 * to_y);
 
       poses.push_back({
-        cx, cy, cz,
+        det->id, cx, cy, cz,
         r11, r12, R.at<double>(0,2),
         r21, r22, R.at<double>(1,2),
         r31, r32, R.at<double>(2,2),
       });
+      visible_ids.push_back(det->id);
+      for (size_t corner = 0; corner < obj_pts.size(); ++corner) {
+        board_object_points.emplace_back(
+          static_cast<float>(to_x) + obj_pts[corner].x,
+          static_cast<float>(to_y) + obj_pts[corner].y,
+          0.0f);
+        board_image_points.push_back(img_pts[corner]);
+      }
     }
 
     std_msgs::msg::UInt32 visible_count_msg;
     visible_count_msg.data = static_cast<uint32_t>(poses.size());
     visible_count_pub_->publish(visible_count_msg);
+    std_msgs::msg::UInt32MultiArray visible_ids_msg;
+    visible_ids_msg.data = visible_ids;
+    visible_ids_pub_->publish(visible_ids_msg);
 
-    // 发布停车板中心位姿(多标签平均)
+    // Estimate the complete board pose.  A single tag uses its independently
+    // solved orientation plus known board offset.  Multiple tags use one
+    // RANSAC PnP solve so every visible corner constrains the same rigid board.
     if (!poses.empty()) {
-      double ax = 0, ay = 0, az = 0;
-      // 旋转矩阵逐元素平均(SVD 正交化更适合,但这里简单平均足够)
-      double ar11=0,ar12=0,ar13=0,ar21=0,ar22=0,ar23=0,ar31=0,ar32=0,ar33=0;
-      for (auto & p : poses) {
-        ax += p.x; ay += p.y; az += p.z;
-        ar11 += p.r11; ar12 += p.r12; ar13 += p.r13;
-        ar21 += p.r21; ar22 += p.r22; ar23 += p.r23;
-        ar31 += p.r31; ar32 += p.r32; ar33 += p.r33;
-      }
-      double n = static_cast<double>(poses.size());
-      ax /= n; ay /= n; az /= n;
-      ar11/=n; ar12/=n; ar13/=n; ar21/=n; ar22/=n; ar23/=n; ar31/=n; ar32/=n; ar33/=n;
+      cv::Mat board_rvec;
+      cv::Mat board_tvec;
+      cv::Mat board_rotation;
+      std::vector<cv::Point3f> quality_object_points;
+      std::vector<cv::Point2f> quality_image_points;
 
+      if (poses.size() == 1U) {
+        const auto & p = poses.front();
+        board_rotation = (cv::Mat_<double>(3, 3) <<
+          p.r11, p.r12, p.r13,
+          p.r21, p.r22, p.r23,
+          p.r31, p.r32, p.r33);
+        cv::Rodrigues(board_rotation, board_rvec);
+        board_tvec = (cv::Mat_<double>(3, 1) << p.x, p.y, p.z);
+        quality_object_points = board_object_points;
+        quality_image_points = board_image_points;
+      } else {
+        cv::Mat inliers;
+        const bool solved = cv::solvePnPRansac(
+          board_object_points, board_image_points,
+          camera_matrix_, dist_coeffs_, board_rvec, board_tvec,
+          false, 100, static_cast<float>(ransac_reprojection_error_),
+          0.99, inliers, cv::SOLVEPNP_ITERATIVE);
+        if (!solved || inliers.total() < 4U) {
+          publish_pose_quality(std::numeric_limits<float>::infinity(), 0U);
+          RCLCPP_WARN_THROTTLE(
+            get_logger(), *get_clock(), 1000,
+            "整板 PnP 失败: tags=%zu inliers=%zu",
+            poses.size(), inliers.total());
+          apriltag_detections_destroy(detections);
+          return;
+        }
+        quality_object_points.reserve(inliers.total());
+        quality_image_points.reserve(inliers.total());
+        for (int row = 0; row < inliers.rows; ++row) {
+          const int index = inliers.at<int>(row, 0);
+          quality_object_points.push_back(board_object_points.at(index));
+          quality_image_points.push_back(board_image_points.at(index));
+        }
+        cv::solvePnPRefineLM(
+          quality_object_points, quality_image_points,
+          camera_matrix_, dist_coeffs_, board_rvec, board_tvec);
+        cv::Rodrigues(board_rvec, board_rotation);
+      }
+
+      std::vector<cv::Point2f> projected_points;
+      cv::projectPoints(
+        quality_object_points, board_rvec, board_tvec,
+        camera_matrix_, dist_coeffs_, projected_points);
+      double squared_error = 0.0;
+      for (size_t i = 0; i < projected_points.size(); ++i) {
+        const double dx = projected_points[i].x - quality_image_points[i].x;
+        const double dy = projected_points[i].y - quality_image_points[i].y;
+        squared_error += dx * dx + dy * dy;
+      }
+      const float reprojection_error = static_cast<float>(
+        std::sqrt(squared_error / std::max<size_t>(1U, projected_points.size())));
+      const uint32_t inlier_count =
+        static_cast<uint32_t>(quality_object_points.size());
+      publish_pose_quality(reprojection_error, inlier_count);
+      if (!std::isfinite(reprojection_error) ||
+        reprojection_error > max_pose_reprojection_error_ ||
+        board_tvec.at<double>(2, 0) <= 0.05)
+      {
+        RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 1000,
+          "拒绝低质量整板位姿: tags=%zu rmse=%.2fpx z=%.3fm",
+          poses.size(), reprojection_error, board_tvec.at<double>(2, 0));
+        apriltag_detections_destroy(detections);
+        return;
+      }
+
+      const double ax = board_tvec.at<double>(0, 0);
+      const double ay = board_tvec.at<double>(1, 0);
+      const double az = board_tvec.at<double>(2, 0);
       double qx, qy, qz, qw;
-      rotation_to_quaternion(ar11,ar12,ar13,ar21,ar22,ar23,ar31,ar32,ar33, qx,qy,qz,qw);
+      rotation_to_quaternion(
+        board_rotation.at<double>(0, 0),
+        board_rotation.at<double>(0, 1),
+        board_rotation.at<double>(0, 2),
+        board_rotation.at<double>(1, 0),
+        board_rotation.at<double>(1, 1),
+        board_rotation.at<double>(1, 2),
+        board_rotation.at<double>(2, 0),
+        board_rotation.at<double>(2, 1),
+        board_rotation.at<double>(2, 2),
+        qx, qy, qz, qw);
 
       // PoseStamped
       geometry_msgs::msg::PoseStamped pose_msg;
@@ -292,11 +404,31 @@ private:
         tf_broadcaster_->sendTransform(tf_msg);
       }
 
-      RCLCPP_INFO_THROTTLE(get_logger(), *get_clock(), 1000,
-        "检测到 %zu 个标签 -> 板中心: (%.3f, %.3f, %.3f)", poses.size(), ax, ay, az);
+      std::ostringstream ids_stream;
+      for (size_t i = 0; i < visible_ids.size(); ++i) {
+        if (i > 0U) ids_stream << ",";
+        ids_stream << visible_ids[i];
+      }
+      RCLCPP_INFO_THROTTLE(
+        get_logger(), *get_clock(), 1000,
+        "整板位姿 tags=%zu ids=[%s] inliers=%u rmse=%.2fpx center=(%.3f, %.3f, %.3f)",
+        poses.size(), ids_stream.str().c_str(), inlier_count,
+        reprojection_error, ax, ay, az);
+    } else {
+      publish_pose_quality(std::numeric_limits<float>::infinity(), 0U);
     }
 
     apriltag_detections_destroy(detections);
+  }
+
+  void publish_pose_quality(float reprojection_error, uint32_t inlier_count)
+  {
+    std_msgs::msg::Float32 error_msg;
+    error_msg.data = reprojection_error;
+    reprojection_error_pub_->publish(error_msg);
+    std_msgs::msg::UInt32 inlier_msg;
+    inlier_msg.data = inlier_count;
+    inlier_count_pub_->publish(inlier_msg);
   }
 
   static void rotation_to_quaternion(
@@ -331,6 +463,10 @@ private:
   double tag_size_ = 0.050;
   double board_width_ = 0.297;
   double board_height_ = 0.300;
+  int max_hamming_ = 0;
+  double min_decision_margin_ = 20.0;
+  double ransac_reprojection_error_ = 3.0;
+  double max_pose_reprojection_error_ = 3.0;
   bool publish_tf_ = true;
   bool target_all_ = false;
   std::set<uint32_t> valid_ids_;
@@ -349,6 +485,9 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr info_sub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_pub_;
   rclcpp::Publisher<std_msgs::msg::UInt32>::SharedPtr visible_count_pub_;
+  rclcpp::Publisher<std_msgs::msg::UInt32MultiArray>::SharedPtr visible_ids_pub_;
+  rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr reprojection_error_pub_;
+  rclcpp::Publisher<std_msgs::msg::UInt32>::SharedPtr inlier_count_pub_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 };
 

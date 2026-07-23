@@ -53,11 +53,22 @@ the board by hand:
 
 ```bash
 ros2 topic echo /apriltag_detector/tag_pose
+ros2 topic echo /apriltag_detector/visible_tag_ids
+ros2 topic echo /apriltag_detector/reprojection_error
+ros2 topic echo /apriltag_detector/inlier_count
 ```
 
 The reported centre must remain at the same physical point when different tags
 are visible. Set `board_width`, `board_height`, and `tag_size` to measured print
 dimensions. Incorrect print scaling directly produces a biased board centre.
+
+Each ID has a known offset from the board centre. A single valid tag therefore
+determines the complete board pose; it is not treated as the parking target
+itself. One-tag tracking uses square-tag IPPE, reduced speed, and a longer
+completion confirmation. With two or more tags, every visible corner enters
+one RANSAC PnP solve followed by LM refinement. Motion stops immediately when
+the pose is stale, has fewer than four inlier corners, or exceeds the configured
+reprojection-error limit.
 
 ## Downward camera calibration
 
@@ -86,9 +97,16 @@ quaternion  = (0.706269, -0.707636, 0.017287, 0.011716)  # x y z w
 ```
 
 Recalibrate these values whenever the pole, camera angle, camera height, or
-camera mounting position changes. Keep `allow_reverse` false for initial tests.
-The first standalone tests use the conservative defaults
-`max_linear=0.03 m/s` and `max_angular=0.20 rad/s`.
+camera mounting position changes. The controller supports oblique approaches:
+it turns toward the board centre, follows a shallow arc, and converges to the
+nearest of the board's four equivalent edge headings. If the target is mostly
+beside the vehicle it rotates before translating. `allow_reverse=true` permits
+only a bounded correction after the vehicle has passed the target; it is not a
+general reverse-driving mode.
+
+The multi-tag limits are `max_linear=0.05 m/s` and
+`max_angular=0.30 rad/s`. A one-tag estimate is deliberately limited to
+`0.025 m/s` and `0.18 rad/s`.
 
 For a standalone direct-output test with Nav2 and `twist_mux` both stopped,
 override the command topic explicitly:
@@ -97,16 +115,28 @@ override the command topic explicitly:
 ros2 launch car_camera board_parking.launch.py \
   cmd_topic:=/cmd_vel parking_enabled:=true \
   target_forward:=0.082 target_left:=0.0 \
-  max_linear:=0.03 max_angular:=0.20
+  max_linear:=0.05 max_angular:=0.30
 ```
 
 Do not use `cmd_topic:=/cmd_vel` while Nav2 is running.
 
 ## Acceptance check
 
-Test all four board rotations. For each one, confirm that the vehicle crosses the
-middle tag on the approached edge, the chassis centre finishes over the physical
-board centre, and `/cmd_vel` becomes zero. Completion requires at least three
-visible tags, a fresh non-jumping pose, the base-frame target within tolerance,
-the nearest board edge within 10 degrees, and every measured footprint corner
-inside the board with the configured safety margin.
+Start with detection-only tests at several oblique angles, then run low-speed
+tests with two or more visible tags. Test the one-tag fallback last by covering
+all but one tag without changing the board pose.
+
+For each approach, confirm that:
+
+- the published board centre stays stable when the set of visible IDs changes;
+- a target more than 55 degrees to the side causes rotation before translation;
+- loss of the tag or poor reprojection quality produces zero velocity;
+- the vehicle converges to the nearest board-edge heading rather than a fixed ID;
+- `/board_parker/parking_complete` changes to `true` and velocity becomes zero.
+
+Completion requires a fresh, quality-gated pose, radial target error no greater
+than 2.5 cm, nearest-edge error no greater than 15 degrees, and at least 90% of
+the measured chassis footprint within the board margin. These conditions must
+hold for six multi-tag frames or twelve single-tag frames. The relaxed overlap
+criterion allows a practical slightly oblique final pose while still preventing
+the controller from stopping merely because one tag is visible.

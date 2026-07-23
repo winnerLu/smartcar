@@ -2,6 +2,8 @@ board_parker:
   ros__parameters:
     pose_topic: /apriltag_detector/tag_pose
     visible_count_topic: /apriltag_detector/visible_tag_count
+    reprojection_error_topic: /apriltag_detector/reprojection_error
+    inlier_count_topic: /apriltag_detector/inlier_count
     base_frame: base_link
     # High-priority visual parking input configured in car_navigation/twist_mux.yaml.
     cmd_topic: /cmd_vel_dock
@@ -15,22 +17,36 @@ board_parker:
     board_margin: 0.005
     footprint_x: [0.197, 0.197, -0.033, -0.033]
     footprint_y: [0.093, -0.093, -0.093, 0.093]
-    kp_linear: 0.7
-    kp_lateral: 2.2
-    kp_edge: 1.0
-    # Conservative defaults for the first standalone parking tests.
-    max_linear: 0.03
-    max_angular: 0.20
+    # Smooth differential-drive pose controller.  All four board-edge
+    # directions are equivalent, so an oblique approach selects the nearest.
+    kp_distance: 0.8
+    kp_bearing: 1.8
+    kp_edge: 0.8
+    max_linear: 0.05
+    max_angular: 0.30
+    # One known tag still determines the board pose, but moves more slowly.
+    single_tag_max_linear: 0.025
+    single_tag_max_angular: 0.18
     min_linear: 0.018
-    forward_tolerance: 0.012
-    lateral_tolerance: 0.012
-    edge_tolerance_deg: 10.0
-    slowdown_distance: 0.15
+    position_tolerance: 0.025
+    edge_tolerance_deg: 15.0
+    min_footprint_overlap: 0.90
+    slowdown_distance: 0.10
     loss_timeout: 0.35
     max_pose_jump: 0.05
-    # ID 7 is permanently obscured by the serial-port assembly in this chassis.
-    min_visible_tags: 3
-    stable_frames: 8
-    allow_reverse: false
+    max_base_pose_jump: 0.03
+    max_edge_jump_deg: 15.0
+    max_reprojection_error: 3.0
+    min_inlier_points: 4
+    tracking_stable_time: 0.25
+    filter_alpha: 0.35
+    max_linear_accel: 0.08
+    max_angular_accel: 0.50
+    # A unique ID and its four ordered corners locate the complete known board.
+    min_visible_tags: 1
+    # Single-tag completion is deliberately held longer than multi-tag.
+    stable_frames: 6
+    single_tag_stable_frames: 12
+    allow_reverse: true
     # Detection may run continuously, but motion requires explicit activation.
     enabled: false

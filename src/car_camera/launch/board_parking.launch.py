@@ -43,8 +43,9 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'parking_enabled', default_value='false',
             description='Start parking control immediately (unsafe for detection-only tests)'),
-        DeclareLaunchArgument('max_linear', default_value='0.03'),
-        DeclareLaunchArgument('max_angular', default_value='0.20'),
+        DeclareLaunchArgument('max_linear', default_value='0.05'),
+        DeclareLaunchArgument('max_angular', default_value='0.30'),
+        DeclareLaunchArgument('max_reprojection_error', default_value='3.0'),
         Node(
             package='tf2_ros', executable='static_transform_publisher',
             name='base_link_to_camera_optical_frame',
@@ -73,6 +74,14 @@ def generate_launch_description():
                 'tag_ids': '0,1,2,3,4,5,6,7',
                 'board_width': LaunchConfiguration('board_width'),
                 'board_height': LaunchConfiguration('board_height'),
+                'max_hamming': 0,
+                'min_decision_margin': 20.0,
+                'ransac_reprojection_error': ParameterValue(
+                    LaunchConfiguration('max_reprojection_error'),
+                    value_type=float),
+                'max_pose_reprojection_error': ParameterValue(
+                    LaunchConfiguration('max_reprojection_error'),
+                    value_type=float),
                 'publish_tf': True,
                 'child_frame_id': 'parking_board',
             }]),
@@ -95,5 +104,8 @@ def generate_launch_description():
                     LaunchConfiguration('max_linear'), value_type=float),
                 'max_angular': ParameterValue(
                     LaunchConfiguration('max_angular'), value_type=float),
+                'max_reprojection_error': ParameterValue(
+                    LaunchConfiguration('max_reprojection_error'),
+                    value_type=float),
             }]),
     ])

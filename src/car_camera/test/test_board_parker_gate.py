@@ -106,3 +106,50 @@ def test_measured_footprint_must_remain_inside_printed_board():
     assert not MODULE.footprint_inside_board(
         (0.122, 0.0, 0.0), board_orientation, footprint,
         0.2881, 0.2910, 0.005)
+
+
+def test_relaxed_completion_uses_footprint_overlap_not_perfect_containment():
+    board_orientation = (math.sqrt(0.5), -math.sqrt(0.5), 0.0, 0.0)
+    footprint = [
+        (0.197, 0.093), (0.197, -0.093),
+        (-0.033, -0.093), (-0.033, 0.093),
+    ]
+    centred = MODULE.footprint_overlap_ratio(
+        (0.082, 0.0, 0.0), board_orientation, footprint,
+        0.2881, 0.2910, 0.005)
+    slightly_offset = MODULE.footprint_overlap_ratio(
+        (0.107, 0.015, 0.0), board_orientation, footprint,
+        0.2881, 0.2910, 0.005)
+    mostly_outside = MODULE.footprint_overlap_ratio(
+        (0.25, 0.0, 0.0), board_orientation, footprint,
+        0.2881, 0.2910, 0.005)
+    assert centred > 0.99
+    assert slightly_offset >= 0.90
+    assert mostly_outside < 0.50
+
+
+def test_oblique_board_generates_a_forward_arc():
+    linear, angular = MODULE.compute_parking_command(
+        0.15, 0.08, math.radians(8.0),
+        0.05, 0.30, 0.018, 0.10,
+        0.8, 1.8, 0.8, True)
+    assert 0.018 <= linear <= 0.05
+    assert 0.0 < angular <= 0.30
+
+
+def test_side_board_turns_before_translating():
+    linear, angular = MODULE.compute_parking_command(
+        0.01, -0.15, 0.0,
+        0.05, 0.30, 0.018, 0.10,
+        0.8, 1.8, 0.8, True)
+    assert linear == 0.0
+    assert angular < 0.0
+
+
+def test_board_behind_uses_bounded_reverse_recovery():
+    linear, angular = MODULE.compute_parking_command(
+        -0.10, 0.02, 0.0,
+        0.05, 0.30, 0.018, 0.10,
+        0.8, 1.8, 0.8, True)
+    assert -0.05 <= linear < 0.0
+    assert angular < 0.0
