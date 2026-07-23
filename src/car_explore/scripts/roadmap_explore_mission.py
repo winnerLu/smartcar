@@ -185,7 +185,20 @@ class RoadmapExploreMission(Node):
         except Exception as exc:
             self._abort_mission(f'Roadmap Explorer result failed: {exc}')
             return
-        if self.state in ('CANCELING_EXPLORATION', 'FINAL_NAVIGATION', 'COMPLETE'):
+
+        if self.state == 'CANCELING_EXPLORATION':
+            if wrapped.status != GoalStatus.STATUS_CANCELED:
+                self._abort_mission(
+                    'Roadmap exploration did not reach the canceled state '
+                    f'before final navigation (status={wrapped.status})')
+                return
+            self.get_logger().info(
+                'Roadmap exploration and its Nav2 goal are fully canceled; '
+                'sending the final target goal')
+            self._send_final_goal()
+            return
+
+        if self.state in ('FINAL_NAVIGATION', 'COMPLETE'):
             return
 
         result = wrapped.result
@@ -272,7 +285,15 @@ class RoadmapExploreMission(Node):
         if not response.goals_canceling:
             self._abort_mission('Roadmap exploration did not acknowledge cancellation')
             return
-        self._send_final_goal()
+        # A successful cancellation response only means that the server accepted
+        # the request. Roadmap Explorer still has to halt its custom Nav2 BT and
+        # wait for that NavigateToPose goal to reach a terminal state. Sending
+        # the final goal here causes Nav2 to treat it as a preemption; because
+        # the two goals use different BT XML files, Nav2 rejects and aborts it.
+        # _explore_result() sends the final goal after STATUS_CANCELED instead.
+        self.get_logger().info(
+            'Roadmap exploration accepted cancellation; waiting for its '
+            'Nav2 goal to terminate before final navigation')
 
     def _send_final_goal(self):
         if self.final_candidate is None:
