@@ -1,16 +1,17 @@
-<!--
-  NavigateThroughPoses 有界恢复树，与 NavigateToPose 使用相同恢复顺序。
--->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
-    <RecoveryNode number_of_retries="4" name="NavigateRecovery">
+    <RecoveryNode number_of_retries="4" name="RoadmapNavigateRecovery">
       <PipelineSequence name="NavigateWithReplanning">
-        <RateController hz="0.333">
-          <RecoveryNode number_of_retries="1" name="ComputePathThroughPoses">
+        <!-- Orange Pi 4A: 1Hz avoids saturating planner_server on a growing map. -->
+        <RateController hz="1.0">
+          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
             <ReactiveSequence>
-              <RemovePassedGoals input_goals="{goals}" output_goals="{goals}" radius="0.7"/>
-              <ComputePathThroughPoses goals="{goals}" path="{path}" planner_id="GridBased"
-                server_timeout="2000"/>
+              <PlannerSelector selected_planner="{selected_planner}"
+                default_planner="GridBased" topic_name="planner_selector"/>
+              <GoalUpdater input_goal="{goal}" output_goal="{updated_goal}">
+                <ComputePathToPose goal="{updated_goal}" path="{path}"
+                  planner_id="{selected_planner}" server_timeout="2000"/>
+              </GoalUpdater>
             </ReactiveSequence>
             <ClearEntireCostmap name="ClearGlobalCostmap-Context"
               service_name="global_costmap/clear_entirely_global_costmap"/>
@@ -18,13 +19,13 @@
         </RateController>
         <FollowPath path="{path}" controller_id="FollowPath" server_timeout="2000"/>
       </PipelineSequence>
-      <ReactiveFallback name="RecoveryFallback">
+      <ReactiveFallback name="RoadmapRecoveryFallback">
         <GoalUpdated/>
-        <RoundRobin name="RecoveryActions">
-          <Sequence name="ClearingActions">
-            <ClearEntireCostmap name="ClearLocalCostmap-Subtree"
+        <RoundRobin name="RoadmapRecoveryActions">
+          <Sequence name="ClearBothCostmaps">
+            <ClearEntireCostmap name="ClearLocalCostmap-Recovery"
               service_name="local_costmap/clear_entirely_local_costmap"/>
-            <ClearEntireCostmap name="ClearGlobalCostmap-Subtree"
+            <ClearEntireCostmap name="ClearGlobalCostmap-Recovery"
               service_name="global_costmap/clear_entirely_global_costmap"/>
           </Sequence>
           <BackUp name="ShortBackUp" backup_dist="0.10" backup_speed="0.05"/>

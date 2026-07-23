@@ -7,4 +7,8 @@ install(DIRECTORY launch config
   DESTINATION share/${PROJECT_NAME}
   PATTERN "__pycache__" EXCLUDE)
 
+install(PROGRAMS
+  scripts/roadmap_explore_mission.py
+  DESTINATION lib/${PROJECT_NAME})
+
 ament_package()

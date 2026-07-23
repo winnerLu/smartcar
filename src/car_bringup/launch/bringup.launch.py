@@ -11,6 +11,8 @@
     ros2 launch car_bringup bringup.launch.py use_lidar:=false
     # rviz 实测微调雷达朝向(改 yaw,单位弧度):
     ros2 launch car_bringup bringup.launch.py laser_yaw:=-0.785
+    # 临时关闭相机立柱盲区裁剪:
+    ros2 launch car_bringup bringup.launch.py lidar_crop_enabled:=false
 
 启动后:
     /wheel/odom (car_base 里程计) + TF odom->base_link
@@ -18,20 +20,20 @@
     /imu/data_raw (IMU)
 
 重要:base_link->base_laser 的 static TF 由本 launch 发布。
-     SDK 的 ld19.launch.py 内自带一个 static_transform_publisher(z=0.18 无旋转),
-     必须在香橙派上注释掉,否则与本 TF 冲突(两个源发同一变换)。
-     见 config/README 或部署说明。
+     ldlidar 节点也由本 launch 直接启动,不再 include SDK 的 ld19.launch.py,
+     因此不会重复发布 SDK 自带的错误外参 TF。
 """
 
 import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, GroupAction
+from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, PythonExpression
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -43,7 +45,10 @@ def generate_launch_description():
     use_lidar = LaunchConfiguration('use_lidar')
     base_port = LaunchConfiguration('base_port')
     params_file = LaunchConfiguration('params_file')
-    lidar_launch = LaunchConfiguration('lidar_launch')
+    lidar_port = LaunchConfiguration('lidar_port')
+    lidar_crop_enabled = LaunchConfiguration('lidar_crop_enabled')
+    lidar_crop_min = LaunchConfiguration('lidar_crop_min')
+    lidar_crop_max = LaunchConfiguration('lidar_crop_max')
     # 雷达相对 base_link 的外参(实测初值,rviz 可微调)
     laser_x = LaunchConfiguration('laser_x')
     laser_y = LaunchConfiguration('laser_y')
@@ -65,9 +70,22 @@ def generate_launch_description():
     declare_params = DeclareLaunchArgument(
         'params_file', default_value=default_params,
         description='car_base 参数文件')
-    declare_lidar_launch = DeclareLaunchArgument(
-        'lidar_launch', default_value='ld19.launch.py',
-        description='雷达 launch 文件名(ldlidar 包内)')
+    declare_lidar_port = DeclareLaunchArgument(
+        'lidar_port', default_value='/dev/ldlidar',
+        description='LD19 串口设备(udev 固定软链接)')
+    # 2026-07-23 实车标定:
+    # 200/200 帧在发布后的 /scan 角 294.48°~309.19° 检测到相机立柱。
+    # 驱动会先按传感器原始角裁剪，再因 laser_scan_dir=True 反转输出索引，
+    # 因此裁剪角应取 360°-[311°, 293°] = [49°, 67°]。
+    declare_lidar_crop_enabled = DeclareLaunchArgument(
+        'lidar_crop_enabled', default_value='true',
+        description='屏蔽被相机立柱遮挡的雷达角段')
+    declare_lidar_crop_min = DeclareLaunchArgument(
+        'lidar_crop_min', default_value='49.0',
+        description='驱动反转输出前的雷达原始裁剪起始角，单位为度')
+    declare_lidar_crop_max = DeclareLaunchArgument(
+        'lidar_crop_max', default_value='67.0',
+        description='驱动反转输出前的雷达原始裁剪结束角，单位为度')
     # 实测标定:前 16cm、右偏 1cm、离地 11.5cm。
     # yaw=4.10rad(~235°):Foxglove 实测对齐值,含雷达上壳装错 180° 的补偿
     # (若上壳物理转正 180°,应改回约 0.96rad)。laser_scan_dir=True 无镜像。
@@ -113,18 +131,36 @@ def generate_launch_description():
         ],
     )
 
-    # ---- 雷达节点(include SDK launch)----
+    # ---- 雷达节点 ----
+    # 直接启动驱动以便由本仓库管理立柱盲区裁剪，同时避免 SDK launch
+    # 重复发布 base_link->base_laser。裁剪角内由驱动发布 NaN，SLAM/Nav2
+    # 会忽略这些点，且不会把真实盲区错误清除为自由空间。
+    ldlidar_node = Node(
+        package='ldlidar',
+        executable='ldlidar',
+        name='LD19',
+        output='screen',
+        parameters=[{
+            'product_name': 'LDLiDAR_LD19',
+            'topic_name': 'scan',
+            'frame_id': 'base_laser',
+            'enable_serial_or_network_communication': True,
+            'port_name': ParameterValue(lidar_port, value_type=str),
+            'port_baudrate': 230400,
+            'server_ip': '192.168.1.200',
+            'server_port': '2000',
+            'laser_scan_dir': True,
+            'enable_angle_crop_func': ParameterValue(
+                lidar_crop_enabled, value_type=bool),
+            'angle_crop_min': ParameterValue(lidar_crop_min, value_type=float),
+            'angle_crop_max': ParameterValue(lidar_crop_max, value_type=float),
+            'measure_point_freq': 4500,
+        }],
+    )
+
     lidar_group = GroupAction(
         condition=IfCondition(use_lidar),
-        actions=[
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource([
-                    PathJoinSubstitution([
-                        FindPackageShare('ldlidar'), 'launch', lidar_launch,
-                    ]),
-                ]),
-            ),
-        ],
+        actions=[ldlidar_node],
     )
 
     return LaunchDescription([
@@ -132,7 +168,10 @@ def generate_launch_description():
         declare_use_safety,
         declare_base_port,
         declare_params,
-        declare_lidar_launch,
+        declare_lidar_port,
+        declare_lidar_crop_enabled,
+        declare_lidar_crop_min,
+        declare_lidar_crop_max,
         declare_laser_x,
         declare_laser_y,
         declare_laser_z,
