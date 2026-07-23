@@ -5,6 +5,7 @@ board_parker:
     reprojection_error_topic: /apriltag_detector/reprojection_error
     inlier_count_topic: /apriltag_detector/inlier_count
     base_frame: base_link
+    odom_frame: odom
     # High-priority visual parking input configured in car_navigation/twist_mux.yaml.
     cmd_topic: /cmd_vel_dock
     # base_link is the drive axle midpoint.  The measured footprint centre is
@@ -42,6 +43,12 @@ board_parker:
     filter_alpha: 0.35
     max_linear_accel: 0.08
     max_angular_accel: 0.50
+    # A short odometry bridge lets the robot cross the tag-free board centre.
+    # It can never declare parking complete without visual confirmation.
+    visual_hold_timeout: 6.0
+    visual_hold_max_distance: 0.12
+    visual_hold_max_linear: 0.018
+    visual_hold_max_angular: 0.12
     # A unique ID and its four ordered corners locate the complete known board.
     min_visible_tags: 1
     # Single-tag completion is deliberately held longer than multi-tag.

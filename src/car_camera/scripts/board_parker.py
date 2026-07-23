@@ -9,7 +9,7 @@ or a small mounting tilt never masquerades as forward parking distance.
 import math
 import time
 
-from geometry_msgs.msg import PoseStamped, Twist
+from geometry_msgs.msg import Pose, PoseStamped, Twist
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
@@ -215,6 +215,13 @@ def compute_parking_command(
     return direction * linear, angular
 
 
+def visual_hold_allowed(age, travelled, timeout, max_distance):
+    """Bound the interval in which odometry may bridge a visual dropout."""
+    return (
+        0.0 <= age <= timeout and
+        0.0 <= travelled <= max_distance)
+
+
 class BoardParker(Node):
     def __init__(self):
         super().__init__('board_parker')
@@ -234,6 +241,8 @@ class BoardParker(Node):
             'cmd_topic', '/cmd_vel_dock').value
         self.base_frame = self.declare_parameter(
             'base_frame', 'base_link').value
+        self.odom_frame = self.declare_parameter(
+            'odom_frame', 'odom').value
 
         # The measured footprint is asymmetric around base_link.  Its geometric
         # centre is 8.2 cm in front of the drive axle midpoint.
@@ -298,6 +307,14 @@ class BoardParker(Node):
             self.declare_parameter('max_linear_accel', 0.08).value)
         self.max_angular_accel = float(
             self.declare_parameter('max_angular_accel', 0.50).value)
+        self.visual_hold_timeout = float(
+            self.declare_parameter('visual_hold_timeout', 6.0).value)
+        self.visual_hold_max_distance = float(
+            self.declare_parameter('visual_hold_max_distance', 0.12).value)
+        self.visual_hold_max_linear = float(
+            self.declare_parameter('visual_hold_max_linear', 0.018).value)
+        self.visual_hold_max_angular = float(
+            self.declare_parameter('visual_hold_max_angular', 0.12).value)
         self.min_visible_tags = int(
             self.declare_parameter('min_visible_tags', 1).value)
         self.stable_frames_required = int(
@@ -321,6 +338,9 @@ class BoardParker(Node):
         self.last_command_time = time.monotonic()
         self.last_linear_command = 0.0
         self.last_angular_command = 0.0
+        self.cached_board_odom_pose = None
+        self.cached_board_time = None
+        self.cached_robot_odom_position = None
         self.stable_frames = 0
         self.parked = False
 
@@ -419,6 +439,9 @@ class BoardParker(Node):
             self.last_command_time = time.monotonic()
             self.last_linear_command = 0.0
             self.last_angular_command = 0.0
+            self.cached_board_odom_pose = None
+            self.cached_board_time = None
+            self.cached_robot_odom_position = None
             self.stable_frames = 0
             self.parked = False
             self.enabled = True
@@ -437,6 +460,9 @@ class BoardParker(Node):
             self.filtered_edge = None
             self.last_linear_command = 0.0
             self.last_angular_command = 0.0
+            self.cached_board_odom_pose = None
+            self.cached_board_time = None
+            self.cached_robot_odom_position = None
             self.stable_frames = 0
             response.message = (
                 'Parking control deactivated; velocity ownership released')
@@ -482,23 +508,85 @@ class BoardParker(Node):
             self.inlier_count >= self.min_inlier_points and
             math.isfinite(self.reprojection_error) and
             self.reprojection_error <= self.max_reprojection_error)
-        if not perception_fresh or not quality_good:
-            self.publish_stop(reset_tracking=True)
-            return
+        visual_tracking = perception_fresh and quality_good
+        hold_age = 0.0
+        hold_travelled = 0.0
 
-        try:
-            transform = self.tf_buffer.lookup_transform(
-                self.base_frame, self.latest_pose.header.frame_id, Time())
-            board_position, board_orientation = transform_pose(
-                self.latest_pose.pose, transform.transform)
-            error_edge = nearest_edge_error(board_orientation)
-        except (TransformException, ValueError) as exc:
-            self.get_logger().warn(
-                'Cannot transform parking board into %s: %s' %
-                (self.base_frame, str(exc)),
-                throttle_duration_sec=2.0)
-            self.publish_stop(reset_tracking=True)
-            return
+        if visual_tracking:
+            try:
+                transform = self.tf_buffer.lookup_transform(
+                    self.base_frame, self.latest_pose.header.frame_id, Time())
+                board_position, board_orientation = transform_pose(
+                    self.latest_pose.pose, transform.transform)
+                error_edge = nearest_edge_error(board_orientation)
+            except (TransformException, ValueError) as exc:
+                self.get_logger().warn(
+                    'Cannot transform parking board into %s: %s' %
+                    (self.base_frame, str(exc)),
+                    throttle_duration_sec=2.0)
+                self.publish_stop(reset_tracking=True)
+                return
+
+            # Cache the static board in odom.  If visual tracking is
+            # temporarily lost while crossing the tag-free centre of the
+            # board, odometry can safely bridge a short bounded interval.
+            try:
+                odom_from_source = self.tf_buffer.lookup_transform(
+                    self.odom_frame, self.latest_pose.header.frame_id, Time())
+                odom_position, odom_orientation = transform_pose(
+                    self.latest_pose.pose, odom_from_source.transform)
+                odom_from_base = self.tf_buffer.lookup_transform(
+                    self.odom_frame, self.base_frame, Time())
+                cached_pose = Pose()
+                cached_pose.position.x = odom_position[0]
+                cached_pose.position.y = odom_position[1]
+                cached_pose.position.z = odom_position[2]
+                cached_pose.orientation.x = odom_orientation[0]
+                cached_pose.orientation.y = odom_orientation[1]
+                cached_pose.orientation.z = odom_orientation[2]
+                cached_pose.orientation.w = odom_orientation[3]
+                self.cached_board_odom_pose = cached_pose
+                self.cached_board_time = now
+                self.cached_robot_odom_position = (
+                    odom_from_base.transform.translation.x,
+                    odom_from_base.transform.translation.y)
+            except (TransformException, ValueError) as exc:
+                self.get_logger().warn(
+                    'Cannot update odometry board memory: %s' % str(exc),
+                    throttle_duration_sec=2.0)
+        else:
+            try:
+                if (self.cached_board_odom_pose is None or
+                        self.cached_board_time is None or
+                        self.cached_robot_odom_position is None):
+                    raise ValueError('no visual board memory')
+                odom_from_base = self.tf_buffer.lookup_transform(
+                    self.odom_frame, self.base_frame, Time())
+                robot_x = odom_from_base.transform.translation.x
+                robot_y = odom_from_base.transform.translation.y
+                hold_age = now - self.cached_board_time
+                hold_travelled = math.hypot(
+                    robot_x - self.cached_robot_odom_position[0],
+                    robot_y - self.cached_robot_odom_position[1])
+                if not visual_hold_allowed(
+                        hold_age, hold_travelled,
+                        self.visual_hold_timeout,
+                        self.visual_hold_max_distance):
+                    raise ValueError(
+                        'visual hold limit reached '
+                        '(age=%.2fs, travelled=%.3fm)' %
+                        (hold_age, hold_travelled))
+                base_from_odom = self.tf_buffer.lookup_transform(
+                    self.base_frame, self.odom_frame, Time())
+                board_position, board_orientation = transform_pose(
+                    self.cached_board_odom_pose, base_from_odom.transform)
+                error_edge = nearest_edge_error(board_orientation)
+            except (TransformException, ValueError) as exc:
+                self.get_logger().warn(
+                    'Visual tracking unavailable; stopping: %s' % str(exc),
+                    throttle_duration_sec=1.0)
+                self.publish_stop(reset_tracking=True)
+                return
 
         if self.filtered_position is None or self.filtered_edge is None:
             self.filtered_position = board_position
@@ -554,7 +642,8 @@ class BoardParker(Node):
             if self.visible_tag_count == 1
             else self.stable_frames_required)
 
-        if (position_error <= self.position_tolerance and
+        if (visual_tracking and
+                position_error <= self.position_tolerance and
                 overlap >= self.min_footprint_overlap and edge_aligned):
             self.stable_frames += 1
             if self.stable_frames >= required_stable_frames:
@@ -571,12 +660,19 @@ class BoardParker(Node):
             return
         self.stable_frames = 0
 
-        max_linear = (
-            self.single_tag_max_linear
-            if self.visible_tag_count == 1 else self.max_linear)
-        max_angular = (
-            self.single_tag_max_angular
-            if self.visible_tag_count == 1 else self.max_angular)
+        if visual_tracking:
+            max_linear = (
+                self.single_tag_max_linear
+                if self.visible_tag_count == 1 else self.max_linear)
+            max_angular = (
+                self.single_tag_max_angular
+                if self.visible_tag_count == 1 else self.max_angular)
+            mode = 'visual'
+        else:
+            max_linear = self.visual_hold_max_linear
+            max_angular = self.visual_hold_max_angular
+            mode = 'odom_hold'
+            self.stable_frames = 0
         target_linear, target_angular = compute_parking_command(
             error_forward, error_left, self.filtered_edge,
             max_linear, max_angular, self.min_linear,
@@ -584,6 +680,12 @@ class BoardParker(Node):
             self.kp_bearing, self.kp_edge, self.allow_reverse)
         if position_error <= self.position_tolerance and not edge_aligned:
             target_linear = 0.0
+        if (not visual_tracking and
+                position_error <= max(0.05, self.position_tolerance)):
+            # Odometry may bridge a blind patch, but visual confirmation is
+            # mandatory near the final pose.
+            target_linear = 0.0
+            target_angular = 0.0
 
         dt = max(0.01, min(0.20, now - self.last_command_time))
         linear_step = self.max_linear_accel * dt
@@ -600,14 +702,16 @@ class BoardParker(Node):
         self.get_logger().info(
             'board_base(fwd=%+.3f,left=%+.3f) '
             'err(dist=%.3f,bearing=%+.1fdeg,edge=%+.1fdeg) '
-            'tags=%d rmse=%.2fpx inliers=%d overlap=%.0f%% '
+            'mode=%s tags=%d rmse=%.2fpx inliers=%d overlap=%.0f%% '
+            'hold(age=%.1fs,travel=%.3fm) '
             'cmd(v=%+.3f,w=%+.3f)' % (
                 self.filtered_position[0], self.filtered_position[1],
                 position_error,
                 math.degrees(math.atan2(error_left, error_forward)),
                 math.degrees(self.filtered_edge),
-                self.visible_tag_count, self.reprojection_error,
+                mode, self.visible_tag_count, self.reprojection_error,
                 self.inlier_count, overlap * 100.0,
+                hold_age, hold_travelled,
                 cmd.linear.x, cmd.angular.z),
             throttle_duration_sec=0.5)
 

@@ -114,7 +114,9 @@ ros2 service call /board_parker/set_enabled \
 - 一个有效 Tag 也能根据唯一 ID 和板内偏移反推出整板位姿，但使用较低
   速度和更长的完成稳定时间。
 - 两个及以上 Tag 使用所有角点统一 `solvePnPRansac` 并细化位姿。
-- 标签位姿或质量话题超过 `loss_timeout` 未更新时立即发布零速。
+- 视觉短暂丢失时，把最后确认的整板位姿固定在 `odom` 中，以更低速度
+  接力穿过停车板中央无标签区域；重新识别后自动切回视觉闭环。
+- 里程计接力超过时间或距离上限时立即停车，且接力期间绝不宣布泊车完成。
 - 达标后 `/board_parker/parking_complete` 变为 `true`，并保持零速。
 - 上层任务收到完成状态后必须关闭 `board_parker`，让 `twist_mux`
   超时释放泊车输入。
@@ -136,6 +138,10 @@ ros2 service call /board_parker/set_enabled \
 | `min_footprint_overlap` | `0.90` | — | 宣布完成所需的最小车体覆盖率 |
 | `max_reprojection_error` | `3.0` | px | 整板位姿最大重投影均方根误差 |
 | `loss_timeout` | `0.35` | s | 位姿失效后停车的超时 |
+| `visual_hold_timeout` | `6.0` | s | 视觉丢失后允许里程计接力的最长时间 |
+| `visual_hold_max_distance` | `0.12` | m | 单次里程计接力最大行驶距离 |
+| `visual_hold_max_linear` | `0.018` | m/s | 接力阶段最大线速度 |
+| `visual_hold_max_angular` | `0.12` | rad/s | 接力阶段最大角速度 |
 | `stable_frames` | `6` | 帧 | 多 Tag 连续满足容差后宣布完成 |
 | `single_tag_stable_frames` | `12` | 帧 | 单 Tag 完成时的额外稳定确认 |
 | `allow_reverse` | `true` | — | 允许越过目标后做受限倒车修正 |

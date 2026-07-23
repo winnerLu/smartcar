@@ -153,3 +153,11 @@ def test_board_behind_uses_bounded_reverse_recovery():
         0.8, 1.8, 0.8, True)
     assert -0.05 <= linear < 0.0
     assert angular < 0.0
+
+
+def test_visual_hold_is_bounded_by_time_and_odometry_distance():
+    assert MODULE.visual_hold_allowed(2.0, 0.04, 6.0, 0.12)
+    assert MODULE.visual_hold_allowed(6.0, 0.12, 6.0, 0.12)
+    assert not MODULE.visual_hold_allowed(6.01, 0.04, 6.0, 0.12)
+    assert not MODULE.visual_hold_allowed(2.0, 0.121, 6.0, 0.12)
+    assert not MODULE.visual_hold_allowed(-0.1, 0.0, 6.0, 0.12)

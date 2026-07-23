@@ -68,7 +68,16 @@ itself. One-tag tracking uses square-tag IPPE, reduced speed, and a longer
 completion confirmation. With two or more tags, every visible corner enters
 one RANSAC PnP solve followed by LM refinement. Motion stops immediately when
 the pose is stale, has fewer than four inlier corners, or exceeds the configured
-reprojection-error limit.
+reprojection-error limit, unless a previously quality-gated board pose is still
+inside the bounded odometry-bridge window.
+
+The board centre is intentionally free of tags, so an oblique one-tag approach
+can lose its only visible corner tag before another edge tag enters the image.
+The controller stores the last confirmed board pose in `odom` and may bridge
+that blind interval for at most 6 seconds or 12 cm. Bridge motion is limited to
+0.018 m/s and 0.12 rad/s. It automatically returns to vision when a tag
+reappears. Odometry alone can never declare parking complete; the final pose
+must be visually confirmed.
 
 ## Downward camera calibration
 
@@ -131,6 +140,8 @@ For each approach, confirm that:
 - the published board centre stays stable when the set of visible IDs changes;
 - a target more than 55 degrees to the side causes rotation before translation;
 - loss of the tag or poor reprojection quality produces zero velocity;
+- a short loss over the blank board centre enters `mode=odom_hold`, then either
+  reacquires vision or stops at the configured time/distance limit;
 - the vehicle converges to the nearest board-edge heading rather than a fixed ID;
 - `/board_parker/parking_complete` changes to `true` and velocity becomes zero.
 
