@@ -1,10 +1,11 @@
 """Regression test for parking velocity ownership."""
 
 import importlib.util
+import math
 from pathlib import Path
 import time
 
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Pose, Transform, Twist
 import rclpy
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
@@ -64,3 +65,44 @@ def test_inactive_parker_does_not_hold_twist_mux_input():
         observer.destroy_node()
         parker.destroy_node()
         rclpy.shutdown()
+
+
+def test_calibrated_camera_transform_recovers_base_frame_parking_target():
+    camera_pose = Pose()
+    camera_pose.position.x = -0.028429949941281923
+    camera_pose.position.y = 0.005243128198284948
+    camera_pose.position.z = 0.5783112928477445
+    camera_pose.orientation.x = -0.003939055113442152
+    camera_pose.orientation.y = -0.020508385656840416
+    camera_pose.orientation.z = -0.0009665695387912702
+    camera_pose.orientation.w = 0.9997814539717619
+
+    base_from_camera = Transform()
+    base_from_camera.translation.x = 0.082651338
+    base_from_camera.translation.y = -0.004695587
+    base_from_camera.translation.z = 0.579014016
+    base_from_camera.rotation.x = 0.706268778
+    base_from_camera.rotation.y = -0.707635714
+    base_from_camera.rotation.z = 0.017286951
+    base_from_camera.rotation.w = 0.011716286
+
+    position, orientation = MODULE.transform_pose(
+        camera_pose, base_from_camera)
+    assert abs(position[0] - 0.082) < 1e-6
+    assert abs(position[1]) < 1e-6
+    assert abs(position[2]) < 1e-6
+    assert abs(MODULE.nearest_edge_error(orientation)) < 1e-6
+
+
+def test_measured_footprint_must_remain_inside_printed_board():
+    board_orientation = (math.sqrt(0.5), -math.sqrt(0.5), 0.0, 0.0)
+    footprint = [
+        (0.197, 0.093), (0.197, -0.093),
+        (-0.033, -0.093), (-0.033, 0.093),
+    ]
+    assert MODULE.footprint_inside_board(
+        (0.082, 0.0, 0.0), board_orientation, footprint,
+        0.2881, 0.2910, 0.005)
+    assert not MODULE.footprint_inside_board(
+        (0.122, 0.0, 0.0), board_orientation, footprint,
+        0.2881, 0.2910, 0.005)

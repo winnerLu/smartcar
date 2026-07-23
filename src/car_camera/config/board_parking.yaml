@@ -1,23 +1,35 @@
 board_parker:
   ros__parameters:
     pose_topic: /apriltag_detector/tag_pose
+    visible_count_topic: /apriltag_detector/visible_tag_count
+    base_frame: base_link
     # High-priority visual parking input configured in car_navigation/twist_mux.yaml.
     cmd_topic: /cmd_vel_dock
-    target_x: 0.0
-    # Calibrate this so the vehicle centre, not merely the camera, is at board centre.
-    target_z: 0.05
+    # base_link is the drive axle midpoint.  The measured footprint centre is
+    # 8.2 cm ahead of it, so the board centre must finish at x=+0.082 m.
+    target_forward: 0.082
+    target_left: 0.0
+    # Provisional physical dimensions of the current 0.97-scale print.
+    board_width: 0.2881
+    board_height: 0.2910
+    board_margin: 0.005
+    footprint_x: [0.197, 0.197, -0.033, -0.033]
+    footprint_y: [0.093, -0.093, -0.093, 0.093]
     kp_linear: 0.7
-    kp_center: 2.2
+    kp_lateral: 2.2
     kp_edge: 1.0
     # Conservative defaults for the first standalone parking tests.
     max_linear: 0.03
     max_angular: 0.20
     min_linear: 0.018
-    center_tolerance: 0.008
-    distance_tolerance: 0.008
-    edge_tolerance_deg: 5.0
+    forward_tolerance: 0.012
+    lateral_tolerance: 0.012
+    edge_tolerance_deg: 10.0
     slowdown_distance: 0.15
     loss_timeout: 0.35
+    max_pose_jump: 0.05
+    # ID 7 is permanently obscured by the serial-port assembly in this chassis.
+    min_visible_tags: 3
     stable_frames: 8
     allow_reverse: false
     # Detection may run continuously, but motion requires explicit activation.

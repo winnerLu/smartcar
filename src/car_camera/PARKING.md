@@ -59,23 +59,36 @@ The reported centre must remain at the same physical point when different tags
 are visible. Set `board_width`, `board_height`, and `tag_size` to measured print
 dimensions. Incorrect print scaling directly produces a biased board centre.
 
-## Required calibration
+## Downward camera calibration
 
-`target_z` is the board-centre depth at which the vehicle centre is physically
-over the board centre. It includes camera mounting offset and cannot be inferred
-from the image alone. Measure it on the successful parking setup and pass it at
-launch time:
+The board is on the floor and the camera looks downward. Camera-frame `z` is
+therefore camera height, not remaining forward distance. The controller
+transforms the detected pose into `base_link` and controls with:
 
-```bash
-ros2 launch car_camera board_parking.launch.py target_z:=0.083
+- `base_link.x`: board centre forward/back position;
+- `base_link.y`: board centre left/right position.
+
+`base_link` is the drive-axle midpoint. The measured footprint extends 19.7 cm
+forward and 3.3 cm backward, so its geometric centre is 8.2 cm ahead of
+`base_link`. The calibrated target is consequently:
+
+```text
+target_forward = 0.082 m
+target_left = 0.000 m
 ```
 
-Tune `target_x` if the camera optical axis is not on the vehicle centreline.
-Keep `allow_reverse` false for initial tests. The first standalone tests use
-the conservative defaults `max_linear=0.03 m/s` and
-`max_angular=0.20 rad/s`. The controller stops immediately when the board pose
-is stale and requires eight consecutive in-tolerance frames before declaring
-success.
+The current base-to-optical transform was measured with the chassis geometric
+centre over the board centre. Its launch defaults are:
+
+```text
+translation = (0.082651, -0.004696, 0.579014) m
+quaternion  = (0.706269, -0.707636, 0.017287, 0.011716)  # x y z w
+```
+
+Recalibrate these values whenever the pole, camera angle, camera height, or
+camera mounting position changes. Keep `allow_reverse` false for initial tests.
+The first standalone tests use the conservative defaults
+`max_linear=0.03 m/s` and `max_angular=0.20 rad/s`.
 
 For a standalone direct-output test with Nav2 and `twist_mux` both stopped,
 override the command topic explicitly:
@@ -83,7 +96,8 @@ override the command topic explicitly:
 ```bash
 ros2 launch car_camera board_parking.launch.py \
   cmd_topic:=/cmd_vel parking_enabled:=true \
-  target_z:=0.083 max_linear:=0.03 max_angular:=0.20
+  target_forward:=0.082 target_left:=0.0 \
+  max_linear:=0.03 max_angular:=0.20
 ```
 
 Do not use `cmd_topic:=/cmd_vel` while Nav2 is running.
@@ -92,6 +106,7 @@ Do not use `cmd_topic:=/cmd_vel` while Nav2 is running.
 
 Test all four board rotations. For each one, confirm that the vehicle crosses the
 middle tag on the approached edge, the chassis centre finishes over the physical
-board centre, and `/cmd_vel` becomes zero. Centre error is the primary acceptance
-metric; the final heading only needs to be within the configured nearest-edge
-tolerance.
+board centre, and `/cmd_vel` becomes zero. Completion requires at least three
+visible tags, a fresh non-jumping pose, the base-frame target within tolerance,
+the nearest board edge within 10 degrees, and every measured footprint corner
+inside the board with the configured safety margin.

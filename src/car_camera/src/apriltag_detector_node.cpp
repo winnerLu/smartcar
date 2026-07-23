@@ -24,6 +24,7 @@
 #include "sensor_msgs/msg/image.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
+#include "std_msgs/msg/u_int32.hpp"
 #include "tf2_ros/transform_broadcaster.h"
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "cv_bridge/cv_bridge.h"
@@ -79,6 +80,8 @@ public:
       camera_info_topic_, 10, std::bind(&AprilTagDetectorNode::on_camera_info, this, std::placeholders::_1));
 
     pose_pub_ = create_publisher<geometry_msgs::msg::PoseStamped>("~/tag_pose", 10);
+    visible_count_pub_ =
+      create_publisher<std_msgs::msg::UInt32>("~/visible_tag_count", 10);
 
     if (publish_tf_) {
       tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
@@ -238,6 +241,10 @@ private:
       });
     }
 
+    std_msgs::msg::UInt32 visible_count_msg;
+    visible_count_msg.data = static_cast<uint32_t>(poses.size());
+    visible_count_pub_->publish(visible_count_msg);
+
     // 发布停车板中心位姿(多标签平均)
     if (!poses.empty()) {
       double ax = 0, ay = 0, az = 0;
@@ -341,6 +348,7 @@ private:
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr image_sub_;
   rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr info_sub_;
   rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr pose_pub_;
+  rclcpp::Publisher<std_msgs::msg::UInt32>::SharedPtr visible_count_pub_;
   std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 };
 

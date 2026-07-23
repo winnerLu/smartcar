@@ -7,7 +7,7 @@
 | 节点 | 功能 | 主要输出 |
 |---|---|---|
 | `car_camera_node` | USB 相机采集和已标定内参发布 | `/camera/image_raw`, `/camera/camera_info` |
-| `apriltag_detector_node` | 检测 tag36h11 ID 0–7 并估算停车板物理中心 | `/apriltag_detector/tag_pose`, TF `camera_optical_frame→parking_board` |
+| `apriltag_detector_node` | 检测 tag36h11 ID 0–7 并估算停车板物理中心 | `/apriltag_detector/tag_pose`, `/apriltag_detector/visible_tag_count`, TF `camera_optical_frame→parking_board` |
 | `board_parker.py` | 四个方向等价的低速停车控制器 | `/cmd_vel_dock`, `/board_parker/parking_complete` |
 | `tag_follower.py` | 旧版单标签跟随控制器，仅保留作对比 | `/cmd_vel_dock` |
 
@@ -80,12 +80,15 @@ ros2 topic hz /cmd_vel_dock
 ros2 launch car_camera board_parking.launch.py \
   cmd_topic:=/cmd_vel \
   parking_enabled:=true \
-  target_z:=0.083 \
+  target_forward:=0.082 \
+  target_left:=0.0 \
   max_linear:=0.03 \
   max_angular:=0.20
 ```
 
-`target_z` 示例值不能直接照搬，必须按相机与车体中心的实际安装关系标定。
+下视相机的 `z` 是镜头离地高度，不能作为前进距离。节点会先把板位姿
+转换到 `base_link`；当前车体几何中心位于驱动轮轴心前方 0.082 m，
+因此默认 `target_forward=0.082`。
 也可以保持 `parking_enabled:=false`，准备完成后通过服务接管：
 
 ```bash
@@ -116,13 +119,15 @@ ros2 service call /board_parker/set_enabled \
 
 | 参数 | 默认值 | 单位 | 说明 |
 |---|---:|---|---|
-| `target_x` | `0.0` | m | 停车板中心相对相机光轴的目标横向偏差 |
-| `target_z` | `0.05` | m | 到板中心的目标深度，必须实车标定 |
+| `target_forward` | `0.082` | m | 停车板中心在 `base_link` 前方的目标位置 |
+| `target_left` | `0.0` | m | 停车板中心在 `base_link` 左侧的目标位置 |
+| `min_visible_tags` | `3` | 个 | 允许控制所需的最少稳定标签数 |
+| `board_margin` | `0.005` | m | 车体轮廓距离停车板边界的最小余量 |
 | `max_linear` | `0.03` | m/s | 首轮测试最大线速度 |
 | `max_angular` | `0.20` | rad/s | 首轮测试最大角速度 |
-| `center_tolerance` | `0.008` | m | 横向容差 |
-| `distance_tolerance` | `0.008` | m | 深度容差 |
-| `edge_tolerance_deg` | `5.0` | ° | 最近停车板边缘方向容差 |
+| `forward_tolerance` | `0.012` | m | 前后方向终点容差 |
+| `lateral_tolerance` | `0.012` | m | 左右方向终点容差 |
+| `edge_tolerance_deg` | `10.0` | ° | 最近停车板边缘方向容差 |
 | `loss_timeout` | `0.35` | s | 位姿失效后停车的超时 |
 | `stable_frames` | `8` | 帧 | 连续满足容差后才宣布完成 |
 | `allow_reverse` | `false` | — | 首轮测试禁用倒车 |
