@@ -4,7 +4,8 @@ camera:
   ros__parameters:
     # udev 固定软链接(见 car_bringup/config/99-smartcar.rules),不受 videoN 编号漂移影响
     video_device: /dev/camera_c270
-    frame_id: camera_link
+    # 图像和 solvePnP 使用 REP-103 光学坐标:x 右、y 下、z 前。
+    frame_id: camera_optical_frame
     image_width: 640
     image_height: 480
     framerate: 30

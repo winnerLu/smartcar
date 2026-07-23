@@ -9,7 +9,7 @@
 启动后:
     /camera/image_raw    (sensor_msgs/Image, bgr8)
     /camera/camera_info  (sensor_msgs/CameraInfo)
-    TF base_link -> camera_link(本 launch 发布)
+    TF base_link -> camera_link -> camera_optical_frame(本 launch 发布)
 """
 
 import os
@@ -43,7 +43,7 @@ def generate_launch_description():
     # 相机相对 base_link 的外参(实测初值,rviz 可微调)
     declare_cam_x = DeclareLaunchArgument('cam_x', default_value='0.15')
     declare_cam_y = DeclareLaunchArgument('cam_y', default_value='0.0')
-    declare_cam_z = DeclareLaunchArgument('cam_z', default_value='0.20')
+    declare_cam_z = DeclareLaunchArgument('cam_z', default_value='0.50')
     declare_cam_yaw = DeclareLaunchArgument('cam_yaw', default_value='0.0')
     declare_cam_pitch = DeclareLaunchArgument('cam_pitch', default_value='0.0')
     declare_cam_roll = DeclareLaunchArgument('cam_roll', default_value='0.0')
@@ -57,9 +57,9 @@ def generate_launch_description():
         parameters=[params_file, {'video_device': video_device}],
     )
 
-    # ---- 相机外参 static TF: base_link -> camera_link ----
+    # ---- 相机安装外参 static TF: base_link -> camera_link ----
     # static_transform_publisher 参数顺序: x y z yaw pitch roll parent child
-    # 按实测安装位置调整;光学坐标系约定 z 朝前、x 右、y 下
+    # 按实测安装位置调整。camera_link 遵循车体坐标:x 前、y 左、z 上。
     camera_tf = Node(
         package='tf2_ros',
         executable='static_transform_publisher',
@@ -68,6 +68,19 @@ def generate_launch_description():
             cam_x, cam_y, cam_z,
             cam_yaw, cam_pitch, cam_roll,
             'base_link', 'camera_link',
+        ],
+    )
+
+    # REP-103 标准光学坐标:x 右、y 下、z 前。图像和 CameraInfo 的
+    # frame_id 必须使用此坐标，而不能冒充 camera_link。
+    optical_tf = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='camera_link_to_optical_frame',
+        arguments=[
+            '0', '0', '0',
+            '-1.57079632679', '0', '-1.57079632679',
+            'camera_link', 'camera_optical_frame',
         ],
     )
 
@@ -82,4 +95,5 @@ def generate_launch_description():
         declare_cam_roll,
         camera_node,
         camera_tf,
+        optical_tf,
     ])

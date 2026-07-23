@@ -1,218 +1,134 @@
-# car_camera — 摄像头采集 + AprilTag 检测 + 视觉伺服泊车
+# car_camera
 
-## 节点概览
+罗技 C270 图像采集、八标签停车板检测和四向视觉泊车。
 
-| 节点 | 语言 | 功能 |
-|------|------|------|
-| `car_camera_node` | C++ | USB 摄像头采集,发布 `/camera/image_raw` + `/camera/camera_info` |
-| `apriltag_detector_node` | C++ | AprilTag `tag36h11` 检测,发布 `/tag_pose` + TF `camera_link→tag_0` |
-| `tag_follower.py` | Python | 视觉伺服 P 控制器,发布 `/cmd_vel` 驱动小车自动泊入标签前方 |
+## 节点与话题
 
-## 数据流
+| 节点 | 功能 | 主要输出 |
+|---|---|---|
+| `car_camera_node` | USB 相机采集和已标定内参发布 | `/camera/image_raw`, `/camera/camera_info` |
+| `apriltag_detector_node` | 检测 tag36h11 ID 0–7 并估算停车板物理中心 | `/apriltag_detector/tag_pose`, TF `camera_optical_frame→parking_board` |
+| `board_parker.py` | 四个方向等价的低速停车控制器 | `/cmd_vel_dock`, `/board_parker/parking_complete` |
+| `tag_follower.py` | 旧版单标签跟随控制器，仅保留作对比 | `/cmd_vel_dock` |
 
+正常融合链路为：
+
+```text
+camera → AprilTag detector → board pose → board_parker
+                                                │
+                                                ▼
+Nav2 /cmd_vel ───────────────┐             /cmd_vel_dock
+                             ▼                  │
+                          twist_mux ◀───────────┘
+                             │
+                       /cmd_vel_raw
+                             │
+                     collision_monitor
+                             │
+                       /cmd_vel_safe
+                             │
+                          car_base
 ```
-┌──────────────┐     ┌──────────────────────┐     ┌──────────────┐
-│ 摄像头/USB    │────▶│ car_camera_node       │────▶│ /image_raw   │
-└──────────────┘     └──────────────────────┘     │ /camera_info │
-                                                   └──────┬───────┘
-                                                          │
-                                                          ▼
-┌──────────────┐     ┌──────────────────────┐     ┌──────────────┐
-│ /tag_pose    │◀────│ apriltag_detector_node│◀────│              │
-│ TF: tag_0    │     └──────────────────────┘     └──────────────┘
-└──────┬───────┘
-       │
-       ▼
-┌──────────────┐     ┌──────────────┐     ┌──────────────┐
-│ tag_follower │────▶│ /cmd_vel     │────▶│ car_base →   │
-│ (P 控制器)    │     │ (Twist)      │     │ 串口 → 电机   │
-└──────────────┘     └──────────────┘     └──────────────┘
-```
 
-## 快速开始
+`/cmd_vel_dock` 的优先级高于 Nav2。`board_parker` 因此默认不激活且
+不发布任何速度，只有显式调用服务后才接管控制权。
 
-### 1. 安装依赖
+## 依赖与编译
 
 ```bash
 sudo apt update
-sudo apt install -y ros-humble-camera-info-manager libapriltag-dev python3-pip
-pip install pupil-apriltags
-```
+sudo apt install -y \
+  ros-humble-camera-info-manager \
+  ros-humble-ament-cmake-pytest \
+  libapriltag-dev
 
-### 2. 编译
-
-```bash
-cd ~/rviz_ros2/smartcar
+cd ~/robot_ws
 source /opt/ros/humble/setup.bash
-colcon build --packages-select car_camera --symlink-install
+colcon build --symlink-install \
+  --packages-select car_camera \
+  --executor sequential
 source install/setup.bash
 ```
 
-### 3. 电脑摄像头测试（仅检测）
+## 第一阶段：只检测，不动车
+
+这是部署后的默认测试方式：
 
 ```bash
-ros2 launch car_camera camera_apriltag.launch.py \
-    video_device:=/dev/video0 tag_size:=0.120
+ros2 launch car_camera board_parking.launch.py \
+  video_device:=/dev/camera_c270
 ```
 
-### 4. 电脑摄像头测试（检测 + 模拟控制）
+另开终端检查：
 
 ```bash
-ros2 launch car_camera camera_apriltag.launch.py \
-    video_device:=/dev/video0 tag_size:=0.120 \
-    enable_follower:=true
-```
-
-### 5. RViz 可视化
-
-```bash
-# 新终端
-source /opt/ros/humble/setup.bash
-ros2 run rviz2 rviz2
-```
-
-RViz 配置:
-
-- **Fixed Frame** → `camera_link`
-- **Add → Image** → Topic: `/camera/image_raw`
-- **Add → TF** → 查看 `tag_0` 坐标系
-- **Add → Pose** → Topic: `/apriltag_detector/tag_pose`
-
-### 6. 查看实时数据
-
-```bash
-# 标签位姿
-ros2 topic echo /apriltag_detector/tag_pose
-
-# 小车控制指令
-ros2 topic echo /cmd_vel
-
-# 图像帧率
+source ~/robot_ws/install/setup.bash
 ros2 topic hz /camera/image_raw
+ros2 topic echo /apriltag_detector/tag_pose
+ros2 topic hz /cmd_vel_dock
 ```
 
-## 日志解读
+最后一条应一直收不到消息。把停车板放到相机不同位置并旋转四个方向，
+检查所发布的停车板中心是否稳定。RViz 的 Fixed Frame 可设为
+`camera_optical_frame`，添加 Image、Pose 和 TF 显示。
 
-```
-[tag_follower] tag(z=0.171, x=0.033, y=-0.005)
-                err(z=0.121, x=0.033, y=-0.005)
-                cmd(v=0.080, w=-0.066)
-```
+## 第二阶段：单独低速测试泊车
 
-| 字段 | 含义 | 示例值解读 |
-|------|------|------------|
-| `tag.z` | 标签距相机深度 | 0.171m — 标签在 17cm 处 |
-| `tag.x` | 标签水平偏移（右正左负） | 0.033m — 偏右 3.3cm |
-| `tag.y` | 标签垂直偏移（下正上负） | -0.005m — 略高 |
-| `err.z` | 深度误差 `tag.z - target_z` | 0.121m — 还差 12cm |
-| `err.x` | 横向误差 | 偏右 3.3cm |
-| `cmd.v` | 线速度指令 `linear.x` | 0.080 — 全速前进 |
-| `cmd.w` | 角速度指令 `angular.z` | -0.066 — 右转修正 |
-
-## 启动参数
-
-### camera_apriltag.launch.py
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `video_device` | `/dev/camera_c270` | 摄像头设备路径 |
-| `camera_name` | `webcam` | 相机名称（须与标定文件一致） |
-| `camera_info_url` | `package://car_camera/config/webcam_calibration.yaml` | 标定文件 URL |
-| `tag_size` | `0.120` | AprilTag 黑色方块实测边长（米） |
-| `enable_follower` | `false` | 是否启动视觉伺服控制 |
-
-### tag_follower (Python 节点)
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `target_z` | `0.05` | 目标距离（米），到达后停车 |
-| `kp_linear` | `0.8` | 深度 P 增益 |
-| `kp_angular` | `2.0` | 横向 P 增益 |
-| `max_linear` | `0.08` | 最大线速度（m/s） |
-| `max_angular` | `0.5` | 最大角速度（rad/s） |
-| `dead_zone_x` | `0.003` | 横向死区（米） |
-| `dead_zone_y` | `0.003` | 垂直死区（米） |
-| `dead_zone_z` | `0.005` | 深度死区（米） |
-| `loss_timeout` | `0.5` | 标签丢失超时（秒），超时自动停车 |
-
-### apriltag_detector (C++ 节点)
-
-| 参数 | 默认值 | 说明 |
-|------|--------|------|
-| `tag_id` | `0` | 追踪的标签 ID，`-1` 表示检测所有 ID |
-| `quad_decimate` | `1.0` | 降采样系数，越小越灵敏（1.0=不降采样） |
-| `tag_family` | `tag36h11` | AprilTag 家族 |
-
-## 调参指南
-
-### 灵敏度不够（检测不到标签）
-
-- 降低 `quad_decimate`（当前已是最低 1.0）
-- 增加光照或缩小标签与摄像头距离
-- 确认标签平整无反光
-
-### 小车动作太猛
+先停止 Nav2 和其他速度发布者。若底盘直接订阅 `/cmd_vel`，可执行：
 
 ```bash
-ros2 launch car_camera camera_apriltag.launch.py \
-    enable_follower:=true max_linear:=0.05 max_angular:=0.3
+ros2 launch car_camera board_parking.launch.py \
+  cmd_topic:=/cmd_vel \
+  parking_enabled:=true \
+  target_z:=0.083 \
+  max_linear:=0.03 \
+  max_angular:=0.20
 ```
 
-### 小车反应太慢
+`target_z` 示例值不能直接照搬，必须按相机与车体中心的实际安装关系标定。
+也可以保持 `parking_enabled:=false`，准备完成后通过服务接管：
 
 ```bash
-ros2 launch car_camera camera_apriltag.launch.py \
-    enable_follower:=true kp_linear:=1.2 kp_angular:=3.0
+ros2 service call /board_parker/set_enabled \
+  std_srvs/srv/SetBool "{data: true}"
 ```
 
-### 停车偏差大
-
-- 先做**相机内参标定**（影响位姿精度）
-- 收紧死区 `dead_zone_x:=0.002 dead_zone_z:=0.003`
-
-## 上车部署
-
-### 1. 相机标定
+立即停车并释放控制权：
 
 ```bash
-ros2 run camera_calibration cameracalibrator \
-    --size 9x6 --square 0.025 \
-    image:=/camera/image_raw camera:=/camera
+ros2 service call /board_parker/set_enabled \
+  std_srvs/srv/SetBool "{data: false}"
 ```
 
-标定完成后得到 `ost.yaml`，放入 `config/` 目录。
+## 与 Nav2 的控制权规则
 
-### 2. 修改启动参数
+- Nav2 仍发布 `/cmd_vel`，优先级 50。
+- 视觉泊车发布 `/cmd_vel_dock`，优先级 100。
+- 检测可以始终运行；未激活的 `board_parker` 不发布速度。
+- 激活时控制器先发布零速，再等待一帧新的停车板位姿。
+- 标签位姿超过 `loss_timeout` 未更新时，泊车控制器持续发布零速。
+- 达标后 `/board_parker/parking_complete` 变为 `true`，并保持零速。
+- 上层任务收到完成状态后必须关闭 `board_parker`，让 `twist_mux`
+  超时释放泊车输入。
+- 禁止在 Nav2 运行时让视觉控制器直接发布 `/cmd_vel`。
 
-```bash
-ros2 launch car_camera camera_apriltag.launch.py \
-    camera_name:=logitech_c270 \
-    camera_info_url:=file:///home/yangqingxi/rviz_ros2/smartcar/src/car_camera/config/ost.yaml \
-    tag_size:=0.119 \
-    enable_follower:=true
-```
+## 关键参数
 
-### 3. 确认 TF 外参
+| 参数 | 默认值 | 单位 | 说明 |
+|---|---:|---|---|
+| `target_x` | `0.0` | m | 停车板中心相对相机光轴的目标横向偏差 |
+| `target_z` | `0.05` | m | 到板中心的目标深度，必须实车标定 |
+| `max_linear` | `0.03` | m/s | 首轮测试最大线速度 |
+| `max_angular` | `0.20` | rad/s | 首轮测试最大角速度 |
+| `center_tolerance` | `0.008` | m | 横向容差 |
+| `distance_tolerance` | `0.008` | m | 深度容差 |
+| `edge_tolerance_deg` | `5.0` | ° | 最近停车板边缘方向容差 |
+| `loss_timeout` | `0.35` | s | 位姿失效后停车的超时 |
+| `stable_frames` | `8` | 帧 | 连续满足容差后才宣布完成 |
+| `allow_reverse` | `false` | — | 首轮测试禁用倒车 |
 
-相机在车上的安装位置通过 `camera.launch.py` 中的 `cam_x/cam_y/cam_z` 参数指定，需按实际安装位置修改。
+相机内参文件为 `config/c270_calibration.yaml`，标定分辨率 640×480。
+`tag_size` 是单个 AprilTag 黑色方块实测边长，`board_width` 和
+`board_height` 是整块停车板的实测尺寸，单位均为米。
 
-### 4. 与底盘联动
-
-```bash
-# 终端1：启底盘（含里程计）
-ros2 launch car_bringup bringup.launch.py
-
-# 终端2：启摄像头 + 检测 + 视觉伺服
-ros2 launch car_camera camera_apriltag.launch.py \
-    camera_name:=logitech_c270 \
-    camera_info_url:=file:///path/to/ost.yaml \
-    enable_follower:=true
-```
-
-## 安全特性
-
-- **丢失停车**：标签离开视野超过 0.5 秒 → 自动发零速
-- **200ms 看门狗**：car_base 节点收不到 `/cmd_vel` 超过 200ms → 自动停车
-- **速度上限**：线速度 ≤ 0.08 m/s，角速度 ≤ 0.5 rad/s
-- **死区保护**：到达目标附近（±3mm 横向, ±5mm 深度）→ 停止，防止抖动
-- **Ctrl+C 安全**：退出时自动发布零速指令
+更完整的泊车标定和验收步骤见 [PARKING.md](PARKING.md)。

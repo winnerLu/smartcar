@@ -2,7 +2,7 @@
 //
 // 发布:  /camera/image_raw    (sensor_msgs/Image, bgr8)   <- cv_bridge 转换
 //        /camera/camera_info  (sensor_msgs/CameraInfo)    <- 支持从 camera_info_url 加载标定
-// TF:    base_link -> camera_link (由 launch 里的 static_transform_publisher 发布)
+// TF:    base_link -> camera_link -> camera_optical_frame (由 launch 发布)
 //
 // 关键设计:
 //   - C270 为标准 UVC 免驱摄像头,用 cv::VideoCapture 直接读取(V4L2 后端)。
@@ -37,7 +37,7 @@ public:
   {
     // ---- 参数 ----
     video_device_ = declare_parameter<std::string>("video_device", "/dev/camera_c270");
-    frame_id_ = declare_parameter<std::string>("frame_id", "camera_link");
+    frame_id_ = declare_parameter<std::string>("frame_id", "camera_optical_frame");
     image_width_ = declare_parameter<int>("image_width", 640);
     image_height_ = declare_parameter<int>("image_height", 480);
     framerate_ = declare_parameter<int>("framerate", 30);

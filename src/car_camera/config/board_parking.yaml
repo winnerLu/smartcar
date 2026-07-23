@@ -1,0 +1,24 @@
+board_parker:
+  ros__parameters:
+    pose_topic: /apriltag_detector/tag_pose
+    # High-priority visual parking input configured in car_navigation/twist_mux.yaml.
+    cmd_topic: /cmd_vel_dock
+    target_x: 0.0
+    # Calibrate this so the vehicle centre, not merely the camera, is at board centre.
+    target_z: 0.05
+    kp_linear: 0.7
+    kp_center: 2.2
+    kp_edge: 1.0
+    # Conservative defaults for the first standalone parking tests.
+    max_linear: 0.03
+    max_angular: 0.20
+    min_linear: 0.018
+    center_tolerance: 0.008
+    distance_tolerance: 0.008
+    edge_tolerance_deg: 5.0
+    slowdown_distance: 0.15
+    loss_timeout: 0.35
+    stable_frames: 8
+    allow_reverse: false
+    # Detection may run continuously, but motion requires explicit activation.
+    enabled: false

@@ -1,0 +1,26 @@
+image_width: 640
+image_height: 480
+camera_name: logitech_c270
+camera_matrix:
+  rows: 3
+  cols: 3
+  data: [710.95034,   0.     , 326.37893,
+           0.     , 710.69589, 243.50451,
+           0.     ,   0.     ,   1.     ]
+distortion_model: plumb_bob
+distortion_coefficients:
+  rows: 1
+  cols: 5
+  data: [0.095644, -0.014134, 0.001749, -0.000436, 0.000000]
+rectification_matrix:
+  rows: 3
+  cols: 3
+  data: [1., 0., 0.,
+         0., 1., 0.,
+         0., 0., 1.]
+projection_matrix:
+  rows: 3
+  cols: 4
+  data: [729.88727,   0.     , 325.47085,   0.     ,
+           0.     , 729.33313, 243.565  ,   0.     ,
+           0.     ,   0.     ,   1.     ,   0.     ]
