@@ -74,17 +74,18 @@ def generate_launch_description():
         'lidar_port', default_value='/dev/ldlidar',
         description='LD19 串口设备(udev 固定软链接)')
     # 2026-07-23 实车标定:
-    # 200/200 帧检测到相机立柱，原始雷达角边界 294.48°~309.19°，
-    # 取 293°~311° 给安装振动和扫描角分辨率留少量余量。
+    # 200/200 帧在发布后的 /scan 角 294.48°~309.19° 检测到相机立柱。
+    # 驱动会先按传感器原始角裁剪，再因 laser_scan_dir=True 反转输出索引，
+    # 因此裁剪角应取 360°-[311°, 293°] = [49°, 67°]。
     declare_lidar_crop_enabled = DeclareLaunchArgument(
         'lidar_crop_enabled', default_value='true',
         description='屏蔽被相机立柱遮挡的雷达角段')
     declare_lidar_crop_min = DeclareLaunchArgument(
-        'lidar_crop_min', default_value='293.0',
-        description='雷达裁剪起始角，单位为度，使用雷达原始角坐标')
+        'lidar_crop_min', default_value='49.0',
+        description='驱动反转输出前的雷达原始裁剪起始角，单位为度')
     declare_lidar_crop_max = DeclareLaunchArgument(
-        'lidar_crop_max', default_value='311.0',
-        description='雷达裁剪结束角，单位为度，使用雷达原始角坐标')
+        'lidar_crop_max', default_value='67.0',
+        description='驱动反转输出前的雷达原始裁剪结束角，单位为度')
     # 实测标定:前 16cm、右偏 1cm、离地 11.5cm。
     # yaw=4.10rad(~235°):Foxglove 实测对齐值,含雷达上壳装错 180° 的补偿
     # (若上壳物理转正 180°,应改回约 0.96rad)。laser_scan_dir=True 无镜像。
