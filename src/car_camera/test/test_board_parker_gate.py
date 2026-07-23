@@ -142,7 +142,7 @@ def test_side_board_turns_before_translating():
         0.01, -0.15, 0.0,
         0.05, 0.30, 0.018, 0.10,
         0.8, 1.8, 0.8, True)
-    assert linear == 0.0
+    assert 0.0 < linear <= 0.011
     assert angular < 0.0
 
 
@@ -161,3 +161,30 @@ def test_visual_hold_is_bounded_by_time_and_odometry_distance():
     assert not MODULE.visual_hold_allowed(6.01, 0.04, 6.0, 0.12)
     assert not MODULE.visual_hold_allowed(2.0, 0.121, 6.0, 0.12)
     assert not MODULE.visual_hold_allowed(-0.1, 0.0, 6.0, 0.12)
+
+
+def test_locked_board_heading_produces_a_fixed_axle_goal():
+    board_heading = math.radians(64.856)
+    locked_heading = MODULE.nearest_equivalent_heading(board_heading, 0.0)
+    assert math.isclose(
+        math.degrees(locked_heading), -25.144, abs_tol=1e-3)
+
+    goal_x, goal_y = MODULE.parking_goal_from_board(
+        0.084, 0.044, locked_heading, 0.082, 0.0)
+    assert math.isclose(goal_x, 0.0097, abs_tol=5e-4)
+    assert math.isclose(goal_y, 0.0788, abs_tol=5e-4)
+
+    forward, left, heading_error = MODULE.goal_error_in_robot(
+        goal_x, goal_y, locked_heading, 0.0, 0.0, 0.0)
+    assert math.isclose(forward, goal_x, abs_tol=1e-9)
+    assert math.isclose(left, goal_y, abs_tol=1e-9)
+    assert math.isclose(heading_error, locked_heading, abs_tol=1e-9)
+
+
+def test_close_goal_fades_bearing_and_prioritizes_locked_heading():
+    linear, angular = MODULE.compute_parking_command(
+        0.001, 0.010, math.radians(-25.0),
+        0.05, 0.30, 0.018, 0.10,
+        0.8, 1.8, 0.8, True)
+    assert linear == 0.0
+    assert angular < 0.0

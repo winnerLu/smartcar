@@ -96,6 +96,44 @@ def nearest_edge_error(q):
     return wrap_period(board_x_angle, math.pi / 2.0)
 
 
+def planar_heading(q):
+    """Return the planar x-axis heading represented by a quaternion."""
+    rotation = quaternion_to_matrix(q)
+    return math.atan2(rotation[3], rotation[0])
+
+
+def nearest_equivalent_heading(board_heading, reference_heading):
+    """Choose the board-edge heading nearest a reference without 45° flips."""
+    return reference_heading + wrap_period(
+        board_heading - reference_heading, math.pi / 2.0)
+
+
+def parking_goal_from_board(
+        board_x, board_y, goal_heading, target_forward, target_left):
+    """Return the desired drive-axle position for one locked board heading."""
+    cos_heading = math.cos(goal_heading)
+    sin_heading = math.sin(goal_heading)
+    offset_x = (
+        cos_heading * target_forward - sin_heading * target_left)
+    offset_y = (
+        sin_heading * target_forward + cos_heading * target_left)
+    return board_x - offset_x, board_y - offset_y
+
+
+def goal_error_in_robot(
+        goal_x, goal_y, goal_heading,
+        robot_x, robot_y, robot_heading):
+    """Express a fixed odom-frame goal pose in the current robot frame."""
+    dx = goal_x - robot_x
+    dy = goal_y - robot_y
+    cos_heading = math.cos(robot_heading)
+    sin_heading = math.sin(robot_heading)
+    return (
+        cos_heading * dx + sin_heading * dy,
+        -sin_heading * dx + cos_heading * dy,
+        wrap_period(goal_heading - robot_heading, 2.0 * math.pi))
+
+
 def footprint_inside_board(
         board_position, board_orientation, footprint,
         board_width, board_height, margin):
@@ -200,18 +238,36 @@ def compute_parking_command(
         direction = -1.0
         bearing = wrap_period(bearing - math.copysign(math.pi, bearing), 2.0 * math.pi)
 
-    angular = clamp(
-        kp_bearing * bearing + kp_edge * error_edge, max_angular)
-    # Turn on the spot when the destination lies mostly beside the robot.
-    if abs(bearing) > math.radians(55.0):
-        return 0.0, angular
+    # Polar pose regulation to a fixed drive-axle pose.  beta couples the
+    # approach direction to the locked final heading and avoids the previous
+    # behaviour where the bearing term kept rotating after the axle was
+    # already centred.
+    if distance <= min(0.02, slowdown_distance * 0.25):
+        return 0.0, clamp(kp_edge * error_edge, max_angular)
+    if direction > 0.0:
+        beta = wrap_period(error_edge - bearing, 2.0 * math.pi)
+        angular = clamp(
+            kp_bearing * bearing - kp_edge * beta, max_angular)
+    else:
+        # While reversing, first keep the axle on the goal line.  Final
+        # orientation is completed by the heading-only branch above.
+        heading_weight = min(1.0, distance / max(0.05, slowdown_distance))
+        angular = clamp(
+            kp_bearing * bearing +
+            kp_edge * error_edge * heading_weight,
+            max_angular)
 
     linear = min(max_linear, kp_distance * distance)
     if slowdown_distance > 1e-6 and distance < slowdown_distance:
         linear *= max(0.45, distance / slowdown_distance)
-    linear *= max(0.20, math.cos(bearing))
-    if 0.0 < linear < min_linear:
-        linear = min_linear
+    alignment_scale = max(0.20, math.cos(bearing))
+    linear *= alignment_scale
+    # Motor deadband compensation is useful during approach but causes a
+    # limit cycle around a nearby sideways goal.  Let the command taper
+    # naturally inside the final 5 cm.
+    deadband_distance = max(0.05, slowdown_distance * 0.5)
+    if 0.0 < linear < min_linear and distance > deadband_distance:
+        linear = min(min_linear, max_linear * alignment_scale)
     return direction * linear, angular
 
 
@@ -341,6 +397,8 @@ class BoardParker(Node):
         self.cached_board_odom_pose = None
         self.cached_board_time = None
         self.cached_robot_odom_position = None
+        self.desired_heading_odom = None
+        self.goal_odom_position = None
         self.stable_frames = 0
         self.parked = False
 
@@ -442,6 +500,8 @@ class BoardParker(Node):
             self.cached_board_odom_pose = None
             self.cached_board_time = None
             self.cached_robot_odom_position = None
+            self.desired_heading_odom = None
+            self.goal_odom_position = None
             self.stable_frames = 0
             self.parked = False
             self.enabled = True
@@ -463,6 +523,8 @@ class BoardParker(Node):
             self.cached_board_odom_pose = None
             self.cached_board_time = None
             self.cached_robot_odom_position = None
+            self.desired_heading_odom = None
+            self.goal_odom_position = None
             self.stable_frames = 0
             response.message = (
                 'Parking control deactivated; velocity ownership released')
@@ -511,6 +573,9 @@ class BoardParker(Node):
         visual_tracking = perception_fresh and quality_good
         hold_age = 0.0
         hold_travelled = 0.0
+        robot_odom_x = None
+        robot_odom_y = None
+        robot_heading_odom = None
 
         if visual_tracking:
             try:
@@ -550,6 +615,21 @@ class BoardParker(Node):
                 self.cached_robot_odom_position = (
                     odom_from_base.transform.translation.x,
                     odom_from_base.transform.translation.y)
+                robot_odom_x = odom_from_base.transform.translation.x
+                robot_odom_y = odom_from_base.transform.translation.y
+                robot_heading_odom = planar_heading(
+                    odom_from_base.transform.rotation)
+                board_heading_odom = planar_heading(odom_orientation)
+                heading_reference = (
+                    robot_heading_odom
+                    if self.desired_heading_odom is None
+                    else self.desired_heading_odom)
+                self.desired_heading_odom = nearest_equivalent_heading(
+                    board_heading_odom, heading_reference)
+                self.goal_odom_position = parking_goal_from_board(
+                    odom_position[0], odom_position[1],
+                    self.desired_heading_odom,
+                    self.target_forward, self.target_left)
             except (TransformException, ValueError) as exc:
                 self.get_logger().warn(
                     'Cannot update odometry board memory: %s' % str(exc),
@@ -562,12 +642,14 @@ class BoardParker(Node):
                     raise ValueError('no visual board memory')
                 odom_from_base = self.tf_buffer.lookup_transform(
                     self.odom_frame, self.base_frame, Time())
-                robot_x = odom_from_base.transform.translation.x
-                robot_y = odom_from_base.transform.translation.y
+                robot_odom_x = odom_from_base.transform.translation.x
+                robot_odom_y = odom_from_base.transform.translation.y
+                robot_heading_odom = planar_heading(
+                    odom_from_base.transform.rotation)
                 hold_age = now - self.cached_board_time
                 hold_travelled = math.hypot(
-                    robot_x - self.cached_robot_odom_position[0],
-                    robot_y - self.cached_robot_odom_position[1])
+                    robot_odom_x - self.cached_robot_odom_position[0],
+                    robot_odom_y - self.cached_robot_odom_position[1])
                 if not visual_hold_allowed(
                         hold_age, hold_travelled,
                         self.visual_hold_timeout,
@@ -587,6 +669,17 @@ class BoardParker(Node):
                     throttle_duration_sec=1.0)
                 self.publish_stop(reset_tracking=True)
                 return
+
+        if (self.goal_odom_position is None or
+                self.desired_heading_odom is None or
+                robot_odom_x is None or
+                robot_odom_y is None or
+                robot_heading_odom is None):
+            self.get_logger().warn(
+                'No locked odometry-frame parking goal; stopping',
+                throttle_duration_sec=1.0)
+            self.publish_stop(reset_tracking=True)
+            return
 
         if self.filtered_position is None or self.filtered_edge is None:
             self.filtered_position = board_position
@@ -630,13 +723,15 @@ class BoardParker(Node):
             self.publish_stop()
             return
 
-        error_forward = self.filtered_position[0] - self.target_forward
-        error_left = self.filtered_position[1] - self.target_left
+        error_forward, error_left, heading_error = goal_error_in_robot(
+            self.goal_odom_position[0], self.goal_odom_position[1],
+            self.desired_heading_odom,
+            robot_odom_x, robot_odom_y, robot_heading_odom)
         position_error = math.hypot(error_forward, error_left)
         overlap = footprint_overlap_ratio(
             self.filtered_position, board_orientation, self.footprint,
             self.board_width, self.board_height, self.board_margin)
-        edge_aligned = abs(self.filtered_edge) <= self.edge_tolerance
+        edge_aligned = abs(heading_error) <= self.edge_tolerance
         required_stable_frames = (
             self.single_tag_stable_frames
             if self.visible_tag_count == 1
@@ -652,7 +747,7 @@ class BoardParker(Node):
                 self.get_logger().info(
                     'Parking complete: error=%.3fm edge=%.1fdeg '
                     'footprint_overlap=%.0f%% tags=%d' %
-                    (position_error, math.degrees(self.filtered_edge),
+                    (position_error, math.degrees(heading_error),
                      overlap * 100.0, self.visible_tag_count))
             self.last_linear_command = 0.0
             self.last_angular_command = 0.0
@@ -674,7 +769,7 @@ class BoardParker(Node):
             mode = 'odom_hold'
             self.stable_frames = 0
         target_linear, target_angular = compute_parking_command(
-            error_forward, error_left, self.filtered_edge,
+            error_forward, error_left, heading_error,
             max_linear, max_angular, self.min_linear,
             self.slowdown_distance, self.kp_distance,
             self.kp_bearing, self.kp_edge, self.allow_reverse)
@@ -701,14 +796,16 @@ class BoardParker(Node):
 
         self.get_logger().info(
             'board_base(fwd=%+.3f,left=%+.3f) '
-            'err(dist=%.3f,bearing=%+.1fdeg,edge=%+.1fdeg) '
+            'goal_base(fwd=%+.3f,left=%+.3f) '
+            'err(dist=%.3f,bearing=%+.1fdeg,heading=%+.1fdeg) '
             'mode=%s tags=%d rmse=%.2fpx inliers=%d overlap=%.0f%% '
             'hold(age=%.1fs,travel=%.3fm) '
             'cmd(v=%+.3f,w=%+.3f)' % (
                 self.filtered_position[0], self.filtered_position[1],
+                error_forward, error_left,
                 position_error,
                 math.degrees(math.atan2(error_left, error_forward)),
-                math.degrees(self.filtered_edge),
+                math.degrees(heading_error),
                 mode, self.visible_tag_count, self.reprojection_error,
                 self.inlier_count, overlap * 100.0,
                 hold_age, hold_travelled,

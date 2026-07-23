@@ -108,10 +108,13 @@ quaternion  = (0.706269, -0.707636, 0.017287, 0.011716)  # x y z w
 Recalibrate these values whenever the pole, camera angle, camera height, or
 camera mounting position changes. The controller supports oblique approaches:
 it turns toward the board centre, follows a shallow arc, and converges to the
-nearest of the board's four equivalent edge headings. If the target is mostly
-beside the vehicle it rotates before translating. `allow_reverse=true` permits
-only a bounded correction after the vehicle has passed the target; it is not a
-general reverse-driving mode.
+nearest of the board's four equivalent edge headings. At activation it locks
+that physical edge direction in `odom` and converts the board centre plus the
+8.2 cm axle offset into one fixed drive-axle goal pose. This prevents the
+nearest-edge choice from flipping at ±45 degrees. Close to the axle goal, the
+singular target-bearing term fades out and the locked heading takes priority.
+`allow_reverse=true` permits only a bounded correction after the vehicle has
+passed the target; it is not a general reverse-driving mode.
 
 The multi-tag limits are `max_linear=0.05 m/s` and
 `max_angular=0.30 rad/s`. A one-tag estimate is deliberately limited to
