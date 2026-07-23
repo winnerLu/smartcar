@@ -57,8 +57,12 @@ roadmap_explorer_node:
       enabled: true
       goal_forward: 3.0
       goal_left: 0.0
-      primary_cone_deg: 60.0
-      fallback_cone_deg: 120.0
+      # 最高优先级只接受目标方向左右各25°；上一轮右偏36.7°的前沿
+      # 因而不会再被当作主方向候选。
+      primary_cone_deg: 25.0
+      # 主方向没有可达前沿时，将左右各90°内的前沿作为次优绕行候选；
+      # 超过90°的候选还会保留，但优先级进一步降低。
+      fallback_cone_deg: 90.0
       target_progress_weight: 5.0
       information_gain_weight: 1.2
       travel_cost_weight: 1.0
