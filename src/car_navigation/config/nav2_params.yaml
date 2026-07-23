@@ -198,8 +198,10 @@ bt_navigator:
     robot_base_frame: base_link
     odom_topic: /wheel/odom
     bt_loop_duration: 10
-    default_server_timeout: 20
-    # 自定义安全恢复树：正常导航禁倒车，仅在左右旋转均失败后后退 0.12m。
+    # 香橙派高负载时 20ms 容易误报 ComputePath/FollowPath 应答超时，
+    # 甚至让仍在执行的控制动作与恢复动作发生竞态。
+    default_server_timeout: 2000
+    # 自定义恢复树：清图 -> 短后退 -> 左60° -> 跨过原方向转到右60°。
     default_nav_to_pose_bt_xml: "$(find-pkg-share car_navigation)/behavior_trees/navigate_to_pose_safe_recovery.xml"
     default_nav_through_poses_bt_xml: "$(find-pkg-share car_navigation)/behavior_trees/navigate_through_poses_safe_recovery.xml"
 

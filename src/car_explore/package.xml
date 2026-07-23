@@ -3,7 +3,7 @@
 <package format="3">
   <name>car_explore</name>
   <version>0.1.0</version>
-  <description>智能车 explore_lite 自主前沿探索配置与启动编排</description>
+  <description>智能车自主探索与目标偏置在线导航</description>
   <maintainer email="lushici@ldrobot.com">lsc</maintainer>
   <license>MIT</license>
 
@@ -12,8 +12,15 @@
   <exec_depend>car_navigation</exec_depend>
   <exec_depend>car_slam</exec_depend>
   <exec_depend>explore_lite</exec_depend>
+  <exec_depend>action_msgs</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
+  <exec_depend>nav2_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
 
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>

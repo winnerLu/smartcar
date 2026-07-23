@@ -7,4 +7,11 @@ install(DIRECTORY launch config
   DESTINATION share/${PROJECT_NAME}
   PATTERN "__pycache__" EXCLUDE)
 
+install(PROGRAMS
+  scripts/goal_directed_explorer.py
+  DESTINATION lib/${PROJECT_NAME})
+
+install(FILES GOAL_DIRECTED_TEST.md
+  DESTINATION share/${PROJECT_NAME})
+
 ament_package()
