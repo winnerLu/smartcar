@@ -46,6 +46,9 @@ public:
     camera_info_topic_ = declare_parameter<std::string>("camera_info_topic", "/camera/camera_info");
     tag_family_ = declare_parameter<std::string>("tag_family", "tag36h11");
     tag_size_ = declare_parameter<double>("tag_size", 0.050);  // 5cm 标签
+    // 停车板尺寸(米): 用于按标签已知位置反算真正的板中心
+    board_width_ = declare_parameter<double>("board_width", 0.297);
+    board_height_ = declare_parameter<double>("board_height", 0.300);
     publish_tf_ = declare_parameter<bool>("publish_tf", true);
     child_frame_id_ = declare_parameter<std::string>("child_frame_id", "parking_board");
 
@@ -91,6 +94,30 @@ public:
   }
 
 private:
+  // -----------------------------------------------------------
+  // 返回标签 id 相对板中心的偏移 (板系: +x 右/宽, +y 下/高, 米)。
+  // 板布局(gen_a3_pdf.py): 四角 + 四边中点, 标签中心距板边 = tag_size/2。
+  // 返回 false 表示该 ID 不在板布局上(应跳过)。
+  // 注意: 假设标签系 +x 与板系 +x 同向(标签正放打印)。若实测板中心系统性偏移,
+  //       可能是标签坐标系与板系存在旋转, 需在此调整 ox/oy 映射。
+  bool board_tag_offset(uint32_t id, double & ox, double & oy) const
+  {
+    const double hx = board_width_ / 2.0 - tag_size_ / 2.0;
+    const double hy = board_height_ / 2.0 - tag_size_ / 2.0;
+    switch (id) {
+      case 0: ox = -hx; oy = -hy; break;
+      case 1: ox = 0.0; oy = -hy; break;
+      case 2: ox =  hx; oy = -hy; break;
+      case 3: ox =  hx; oy = 0.0; break;
+      case 4: ox =  hx; oy =  hy; break;
+      case 5: ox = 0.0; oy =  hy; break;
+      case 6: ox = -hx; oy =  hy; break;
+      case 7: ox = -hx; oy = 0.0; break;
+      default: return false;
+    }
+    return true;
+  }
+
   // -----------------------------------------------------------
   void parse_tag_ids(const std::string & str)
   {
@@ -158,6 +185,11 @@ private:
       if (!target_all_ && valid_ids_.find(det->id) == valid_ids_.end())
         continue;
 
+      // 跳过不在板布局上的 ID
+      double to_x, to_y;
+      if (!board_tag_offset(det->id, to_x, to_y))
+        continue;
+
       if (!printed_detect) {
         printed_detect = true;
       }
@@ -181,11 +213,19 @@ private:
       cv::Mat R;
       cv::Rodrigues(rvec, R);
 
+      // 反算板中心: board_center = tvec - R * offset (共面: 板姿态 = 标签姿态 R)
+      const double r11 = R.at<double>(0,0), r12 = R.at<double>(0,1);
+      const double r21 = R.at<double>(1,0), r22 = R.at<double>(1,1);
+      const double r31 = R.at<double>(2,0), r32 = R.at<double>(2,1);
+      const double cx = tvec.at<double>(0,0) - (r11 * to_x + r12 * to_y);
+      const double cy = tvec.at<double>(1,0) - (r21 * to_x + r22 * to_y);
+      const double cz = tvec.at<double>(2,0) - (r31 * to_x + r32 * to_y);
+
       poses.push_back({
-        tvec.at<double>(0,0), tvec.at<double>(1,0), tvec.at<double>(2,0),
-        R.at<double>(0,0), R.at<double>(0,1), R.at<double>(0,2),
-        R.at<double>(1,0), R.at<double>(1,1), R.at<double>(1,2),
-        R.at<double>(2,0), R.at<double>(2,1), R.at<double>(2,2),
+        cx, cy, cz,
+        r11, r12, R.at<double>(0,2),
+        r21, r22, R.at<double>(1,2),
+        r31, r32, R.at<double>(2,2),
       });
     }
 
@@ -266,6 +306,8 @@ private:
   // 参数
   std::string image_topic_, camera_info_topic_, tag_family_, child_frame_id_;
   double tag_size_ = 0.050;
+  double board_width_ = 0.297;
+  double board_height_ = 0.300;
   bool publish_tf_ = true;
   bool target_all_ = false;
   std::set<uint32_t> valid_ids_;
