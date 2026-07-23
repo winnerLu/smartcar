@@ -199,9 +199,15 @@ private:
         {static_cast<float>(det->p[3][0]), static_cast<float>(det->p[3][1])},
       };
       float half = static_cast<float>(tag_size_ / 2.0);
+      // apriltag_detection_t::p is ordered lower-left, lower-right,
+      // upper-right, upper-left for an upright tag.  Use an OpenCV optical
+      // frame-compatible board convention here: +x is image-right and +y is
+      // image-down.  The previous mapping assigned p[0] to (-x, -y), making
+      // the solved tag +y axis point upward while board_tag_offset() uses
+      // +y downward.  That mirrored every per-tag board-centre correction.
       std::vector<cv::Point3f> obj_pts = {
-        {-half, -half, 0.0f}, {half, -half, 0.0f},
-        {half,  half, 0.0f}, {-half,  half, 0.0f},
+        {-half,  half, 0.0f}, {half,  half, 0.0f},
+        {half, -half, 0.0f}, {-half, -half, 0.0f},
       };
       cv::Mat rvec, tvec;
       if (!cv::solvePnP(

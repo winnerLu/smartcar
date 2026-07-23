@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).parents[1] / 'AprilTag_tag36h11_ID0'
+DETECTOR_SOURCE = Path(__file__).parents[1] / 'src' / 'apriltag_detector_node.cpp'
 
 
 def load_module(name, path):
@@ -50,3 +51,18 @@ def test_codewords_and_print_scale_match_detector_configuration():
     for tag_id, expected in enumerate(OFFICIAL_FIRST_EIGHT):
         path = ROOT / 'tags_5cm' / f'tag36h11_id{tag_id:02d}.png'
         assert decode_generated_tag(path) == expected
+
+
+def test_detector_corner_order_uses_image_down_as_positive_board_y():
+    """Keep the solvePnP tag axes consistent with the printed board layout.
+
+    apriltag_detection_t::p starts at the lower-left corner.  Mapping that
+    corner to (-x, +y) makes the solved +y direction point down in the image,
+    which is also how TAG_POSITIONS_BOARD and board_tag_offset() define +y.
+    """
+    source = DETECTOR_SOURCE.read_text(encoding='utf-8')
+    expected_mapping = (
+        '{-half,  half, 0.0f}, {half,  half, 0.0f},\n'
+        '        {half, -half, 0.0f}, {-half, -half, 0.0f},'
+    )
+    assert expected_mapping in source
