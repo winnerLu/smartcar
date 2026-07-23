@@ -261,7 +261,7 @@ private:
       const double cz = tvec.at<double>(2,0) - (r31 * to_x + r32 * to_y);
 
       poses.push_back({
-        det->id, cx, cy, cz,
+        static_cast<uint32_t>(det->id), cx, cy, cz,
         r11, r12, R.at<double>(0,2),
         r21, r22, R.at<double>(1,2),
         r31, r32, R.at<double>(2,2),
