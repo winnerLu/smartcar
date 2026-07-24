@@ -14,6 +14,10 @@
 - 根据启动时车头方向和终点相对坐标，优先选择向终点取得进展的 Frontier，
   而不是要求扫完整张地图。
 - 目标方向暂时不可达时依次放宽到±60°、±120°和全方向，因此可以绕出死胡同。
+- Roadmap 连续 8s 没有产生 0.10m 位置进展时，任务节点会停止其无 Frontier
+  循环，依次检查目标方向及 ±15°/±30°/±45° 的 0.35m、0.20m 短程点。
+  只有终点周围已知安全且整条 Nav2 路径 100% 位于已知自由区时才会移动；
+  移动后继续原 Roadmap 会话，最多发送 6 次，不使用盲目旋转或强制前进。
 - 只有停车板中心和其前方预泊车点成为已知自由区、两者间无墙，且 Nav2 能
   规划出至少 85% 位于已知自由区的路径时，才会停止 Roadmap 探索。
 - Nav2 到达停车板中心前方约 0.35m 的预泊车点后按 XY 距离取消目标，
@@ -106,6 +110,12 @@ ros2 launch car_explore roadmap_exploration.launch.py \
 - `search_lateral_step` / `search_forward_step`：有限搜索最大偏移，默认
   0.14m / 0.10m。
 - `search_timeout`：全部视觉搜索最多 25s。
+- `progressive_probe_enabled`：是否启用 Roadmap 停滞后的目标方向渐进探测，
+  默认 `true`。
+- `exploration_stall_timeout`：无位置进展多久触发一次渐进探测，默认 8s。
+- `progressive_probe_step` / `progressive_probe_min_step`：长、短探测步长，
+  默认 0.35m / 0.20m。
+- `progressive_probe_max_attempts`：整次任务最多发送 6 个短程探测目标。
 
 这个启动文件默认同时启动 `car_camera/board_parking.launch.py`，并确保泊车
 控制器初始为禁用状态。不要再单独启动第二套相机节点。如果相机已经由外部
@@ -131,6 +141,10 @@ ros2 launch car_explore roadmap_exploration.launch.py \
 ```text
 Roadmap探索 → Nav2预泊车点（只看XY） → 完整Tag稳定确认
           → 找不到Tag则有限Nav2搜索 → 视觉泊车 → parking_complete
+
+Roadmap若停滞：
+
+Roadmap取消 → 已知安全目标扇形短程点 → Nav2短程移动 → 继续原Roadmap会话
 ```
 
 如果需要对照上游 Roadmap 的完整探索行为：
@@ -150,6 +164,8 @@ ros2 launch car_explore roadmap_exploration.launch.py \
 - `planner_server` 负载是否仍能保持 1Hz 规划，不出现连续超时。
 - 目标切换是否比 `explore_lite` 少，重复路径是否减少。
 - 是否先出现 `Goal-directed Roadmap selected frontier`，目标方向被堵后才选侧向 Frontier。
+- Roadmap 无 Frontier 卡住时应依次出现 `made no positional progress`、
+  `Dispatching progressive probe` 和 `continuing the existing Roadmap session`。
 - 只有出现 `Pre-parking point has a safe path ...` 后才结束探索。
 - 到预泊车点应出现 `arrival will use XY tolerance ... and ignore yaw`，不应为了
   对齐目标航向继续原地旋转。

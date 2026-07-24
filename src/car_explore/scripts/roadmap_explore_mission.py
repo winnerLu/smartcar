@@ -26,6 +26,7 @@ from roadmap_handoff import (
     bounded_search_points,
     position_reached,
     preparking_point,
+    progressive_probe_points,
     tag_observation_valid,
 )
 
@@ -113,6 +114,16 @@ class RoadmapExploreMission(Node):
         self.mission_start_time = 0.0
         self.next_direct_check_time = 0.0
         self.last_wait_log_time = 0.0
+        self.exploration_progress_pose: Optional[Point] = None
+        self.exploration_progress_time = 0.0
+        self.exploration_request_mode = 'new'
+        self.probe_candidates: List[Point] = []
+        self.probe_index = 0
+        self.probe_plan_candidate: Optional[PoseStamped] = None
+        self.probe_start_target_distance = math.inf
+        self.probe_attempts = 0
+        self.probe_failures = 0
+        self.probe_settle_start_time = 0.0
         self.timer = self.create_timer(0.5, self._tick)
 
     def _declare_parameters(self):
@@ -151,6 +162,18 @@ class RoadmapExploreMission(Node):
             'parking_timeout': 45.0,
             'direct_path_known_ratio': 0.85,
             'direct_check_period': 1.0,
+            'progressive_probe_enabled': True,
+            'exploration_stall_timeout': 8.0,
+            'exploration_progress_distance': 0.10,
+            'progressive_probe_step': 0.35,
+            'progressive_probe_min_step': 0.20,
+            'progressive_probe_fan_angles_deg': [
+                0.0, 15.0, -15.0, 30.0, -30.0, 45.0, -45.0],
+            'progressive_probe_min_progress': 0.12,
+            'progressive_probe_known_ratio': 1.0,
+            'progressive_probe_settle_time': 1.0,
+            'progressive_probe_max_attempts': 6,
+            'progressive_probe_max_failures': 3,
             'mission_timeout': 300.0,
             'free_threshold': 20,
             'occupied_threshold': 65,
@@ -175,6 +198,15 @@ class RoadmapExploreMission(Node):
                 'search_forward_step', 'search_lateral_step',
                 'search_dwell_time', 'search_timeout', 'parking_timeout',
                 'direct_path_known_ratio', 'direct_check_period',
+                'progressive_probe_enabled', 'exploration_stall_timeout',
+                'exploration_progress_distance', 'progressive_probe_step',
+                'progressive_probe_min_step',
+                'progressive_probe_fan_angles_deg',
+                'progressive_probe_min_progress',
+                'progressive_probe_known_ratio',
+                'progressive_probe_settle_time',
+                'progressive_probe_max_attempts',
+                'progressive_probe_max_failures',
                 'mission_timeout', 'free_threshold', 'occupied_threshold',
                 'endpoint_clearance'):
             setattr(self, name, self.get_parameter(name).value)
@@ -219,6 +251,29 @@ class RoadmapExploreMission(Node):
         self.parking_timeout = max(0.0, float(self.parking_timeout))
         self.direct_path_known_ratio = float(self.direct_path_known_ratio)
         self.direct_check_period = float(self.direct_check_period)
+        self.progressive_probe_enabled = bool(
+            self.progressive_probe_enabled)
+        self.exploration_stall_timeout = max(
+            1.0, float(self.exploration_stall_timeout))
+        self.exploration_progress_distance = max(
+            0.02, float(self.exploration_progress_distance))
+        self.progressive_probe_step = max(
+            0.05, float(self.progressive_probe_step))
+        self.progressive_probe_min_step = min(
+            self.progressive_probe_step,
+            max(0.05, float(self.progressive_probe_min_step)))
+        self.progressive_probe_fan_angles_deg = tuple(
+            float(value) for value in self.progressive_probe_fan_angles_deg)
+        self.progressive_probe_min_progress = max(
+            0.01, float(self.progressive_probe_min_progress))
+        self.progressive_probe_known_ratio = min(
+            1.0, max(0.0, float(self.progressive_probe_known_ratio)))
+        self.progressive_probe_settle_time = max(
+            0.0, float(self.progressive_probe_settle_time))
+        self.progressive_probe_max_attempts = max(
+            1, int(self.progressive_probe_max_attempts))
+        self.progressive_probe_max_failures = max(
+            1, int(self.progressive_probe_max_failures))
         self.mission_timeout = float(self.mission_timeout)
         self.free_threshold = int(self.free_threshold)
         self.occupied_threshold = int(self.occupied_threshold)
@@ -258,6 +313,13 @@ class RoadmapExploreMission(Node):
             return
 
         if self.state == 'EXPLORING':
+            self._update_exploration_progress(now)
+            if (self.goal_directed_mode and
+                    self.progressive_probe_enabled and
+                    not self.plan_in_progress and
+                    self._exploration_stalled(now)):
+                self._cancel_exploration_for_probe()
+                return
             if (not self.goal_directed_mode or self.plan_in_progress or
                     now < self.next_direct_check_time):
                 return
@@ -267,8 +329,11 @@ class RoadmapExploreMission(Node):
                 self._request_direct_path(candidate)
             return
 
-        if self.state in ('FINAL_NAVIGATION', 'SEARCH_NAVIGATION'):
-            if (self.visual_parking_enabled and
+        if self.state in (
+                'FINAL_NAVIGATION', 'SEARCH_NAVIGATION',
+                'PROBE_NAVIGATION'):
+            if (self.state != 'PROBE_NAVIGATION' and
+                    self.visual_parking_enabled and
                     self._tag_confirmed(now) and
                     self._inside_tag_handoff_region()):
                 self._cancel_active_nav('tag_confirmed')
@@ -279,6 +344,12 @@ class RoadmapExploreMission(Node):
             if (self.state == 'SEARCH_NAVIGATION' and
                     self._search_timed_out(now)):
                 self._cancel_active_nav('search_timeout')
+            return
+
+        if self.state == 'PROBE_SETTLE':
+            if (now - self.probe_settle_start_time >=
+                    self.progressive_probe_settle_time):
+                self._resume_roadmap_after_probe()
             return
 
         if self.state == 'TAG_ACQUISITION':
@@ -361,10 +432,22 @@ class RoadmapExploreMission(Node):
             f'relative=({self.goal_forward:.2f}m forward, {self.goal_left:.2f}m left). '
             'Final Nav2 arrival uses XY position only; yaw is not a completion condition.')
 
+        self._send_exploration_goal(new_session=True)
+
+    def _send_exploration_goal(self, new_session: bool):
+        if self.explore_goal_handle is not None:
+            self._abort_mission(
+                'Cannot start Roadmap exploration while another goal is active')
+            return
         goal = Explore.Goal()
-        goal.exploration_bringup_mode = Explore.Goal.NEW_EXPLORATION_SESSION
+        goal.exploration_bringup_mode = (
+            Explore.Goal.NEW_EXPLORATION_SESSION
+            if new_session else
+            Explore.Goal.CONTINUE_FROM_TERMINATED_SESSION)
         goal.load_from_folder.data = ''
         goal.session_name.data = 'smartcar_goal_directed'
+        self.exploration_request_mode = 'new' if new_session else 'continued'
+        self.state = 'SENDING_EXPLORATION'
         future = self.explore_client.send_goal_async(goal)
         future.add_done_callback(self._explore_goal_response)
 
@@ -398,7 +481,11 @@ class RoadmapExploreMission(Node):
             return
         self.explore_goal_handle = goal_handle
         self.state = 'EXPLORING'
-        self.get_logger().info('Roadmap Explorer accepted the exploration goal')
+        self._reset_exploration_watchdog()
+        self.next_direct_check_time = 0.0
+        self.get_logger().info(
+            f'Roadmap Explorer accepted the {self.exploration_request_mode} '
+            'exploration goal')
         goal_handle.get_result_async().add_done_callback(self._explore_result)
 
     def _explore_result(self, future):
@@ -407,6 +494,7 @@ class RoadmapExploreMission(Node):
         except Exception as exc:
             self._abort_mission(f'Roadmap Explorer result failed: {exc}')
             return
+        self.explore_goal_handle = None
 
         if self.state == 'CANCELING_EXPLORATION':
             if wrapped.status != GoalStatus.STATUS_CANCELED:
@@ -420,7 +508,21 @@ class RoadmapExploreMission(Node):
             self._send_final_goal()
             return
 
-        if self.state in ('FINAL_NAVIGATION', 'COMPLETE'):
+        if self.state == 'CANCELING_EXPLORATION_FOR_PROBE':
+            if wrapped.status not in (
+                    GoalStatus.STATUS_CANCELED,
+                    GoalStatus.STATUS_SUCCEEDED):
+                self._abort_mission(
+                    'Roadmap exploration did not stop cleanly before a '
+                    f'progressive probe (status={wrapped.status})')
+                return
+            self.get_logger().info(
+                'Roadmap exploration is stopped; selecting a known-safe '
+                'target-directed probe')
+            self._prepare_progressive_probe()
+            return
+
+        if self.state in ('FINAL_NAVIGATION', 'COMPLETE', 'FAILED'):
             return
 
         result = wrapped.result
@@ -514,9 +616,231 @@ class RoadmapExploreMission(Node):
         # the final goal here causes Nav2 to treat it as a preemption; because
         # the two goals use different BT XML files, Nav2 rejects and aborts it.
         # _explore_result() sends the final goal after STATUS_CANCELED instead.
+        if self.state == 'CANCELING_EXPLORATION_FOR_PROBE':
+            self.get_logger().info(
+                'Roadmap exploration accepted cancellation; waiting for its '
+                'Nav2 goal to terminate before progressive probing')
+        else:
+            self.get_logger().info(
+                'Roadmap exploration accepted cancellation; waiting for its '
+                'Nav2 goal to terminate before final navigation')
+
+    def _reset_exploration_watchdog(self):
+        now = self._now_seconds()
+        robot = self._robot_pose()
+        self.exploration_progress_pose = (
+            (robot[0], robot[1]) if robot is not None else None)
+        self.exploration_progress_time = now
+
+    def _update_exploration_progress(self, now: float):
+        robot = self._robot_pose()
+        if robot is None:
+            return
+        current = (robot[0], robot[1])
+        if self.exploration_progress_pose is None:
+            self.exploration_progress_pose = current
+            self.exploration_progress_time = now
+            return
+        if math.hypot(
+                current[0] - self.exploration_progress_pose[0],
+                current[1] - self.exploration_progress_pose[1]
+        ) >= self.exploration_progress_distance:
+            self.exploration_progress_pose = current
+            self.exploration_progress_time = now
+
+    def _exploration_stalled(self, now: float) -> bool:
+        return (
+            self.exploration_progress_time > 0.0 and
+            now - self.exploration_progress_time >=
+            self.exploration_stall_timeout)
+
+    def _cancel_exploration_for_probe(self):
+        if self.explore_goal_handle is None:
+            self._abort_mission(
+                'Cannot start progressive probing: Roadmap goal handle is missing')
+            return
+        if self.probe_attempts >= self.progressive_probe_max_attempts:
+            self._abort_mission(
+                'Progressive probe attempt limit reached without a safe '
+                'target path')
+            return
+        self.state = 'CANCELING_EXPLORATION_FOR_PROBE'
+        future = self.explore_goal_handle.cancel_goal_async()
+        future.add_done_callback(self._explore_cancel_done)
+        self.get_logger().warning(
+            'Roadmap exploration made no positional progress for '
+            f'{self.exploration_stall_timeout:.1f}s; canceling it to select '
+            'a short target-directed probe')
+
+    def _prepare_progressive_probe(self):
+        robot = self._robot_pose()
+        if robot is None or self.preparking_pose is None:
+            self._abort_mission(
+                'Cannot generate a progressive probe without robot and '
+                'pre-parking poses')
+            return
+        destination = self.preparking_pose.pose.position
+        origin = (robot[0], robot[1])
+        target = (destination.x, destination.y)
+        self.probe_start_target_distance = math.hypot(
+            target[0] - origin[0], target[1] - origin[1])
+        generated = progressive_probe_points(
+            origin, target,
+            self.progressive_probe_step,
+            self.progressive_probe_min_step,
+            self.progressive_probe_fan_angles_deg,
+            self.progressive_probe_min_progress)
+        self.probe_candidates = [
+            point for point in generated if self._safe_search_point(point)]
+        self.probe_index = 0
+        self.probe_plan_candidate = None
         self.get_logger().info(
-            'Roadmap exploration accepted cancellation; waiting for its '
-            'Nav2 goal to terminate before final navigation')
+            f'Progressive probe generated {len(generated)} geometric '
+            f'candidates; {len(self.probe_candidates)} have known-free '
+            'endpoints and required clearance')
+        self._send_next_probe_candidate()
+
+    def _send_next_probe_candidate(self):
+        if self.probe_attempts >= self.progressive_probe_max_attempts:
+            self._abort_mission(
+                'Progressive probe attempt limit reached without a safe '
+                'target path')
+            return
+        while self.probe_index < len(self.probe_candidates):
+            index = self.probe_index
+            point = self.probe_candidates[index]
+            self.probe_index += 1
+            robot = self._robot_pose()
+            yaw = robot[2] if robot is not None else 0.0
+            candidate = self._make_pose(point[0], point[1], yaw)
+            self.get_logger().info(
+                f'Checking progressive probe candidate {index + 1}/'
+                f'{len(self.probe_candidates)}: '
+                f'({point[0]:.2f}, {point[1]:.2f})')
+            self._request_probe_plan(candidate)
+            return
+        self._handle_probe_selection_exhausted()
+
+    def _request_probe_plan(self, candidate: PoseStamped):
+        self.plan_in_progress = True
+        self.probe_plan_candidate = candidate
+        self.state = 'PLANNING_PROBE'
+        goal = ComputePathToPose.Goal()
+        goal.goal = candidate
+        goal.planner_id = str(self.planner_id)
+        goal.use_start = False
+        future = self.plan_client.send_goal_async(goal)
+        future.add_done_callback(self._probe_plan_goal_response)
+
+    def _probe_plan_goal_response(self, future):
+        try:
+            goal_handle = future.result()
+        except Exception as exc:
+            self.plan_in_progress = False
+            self.get_logger().warning(
+                f'Progressive probe planning request failed: {exc}')
+            self._send_next_probe_candidate()
+            return
+        if self.state != 'PLANNING_PROBE':
+            if goal_handle.accepted:
+                goal_handle.cancel_goal_async()
+            self.plan_in_progress = False
+            return
+        if not goal_handle.accepted:
+            self.plan_in_progress = False
+            self.get_logger().warning(
+                'Nav2 rejected one progressive probe plan request')
+            self._send_next_probe_candidate()
+            return
+        goal_handle.get_result_async().add_done_callback(
+            self._probe_plan_result)
+
+    def _probe_plan_result(self, future):
+        self.plan_in_progress = False
+        if self.state != 'PLANNING_PROBE':
+            return
+        try:
+            wrapped = future.result()
+        except Exception as exc:
+            self.get_logger().warning(
+                f'Progressive probe planning result failed: {exc}')
+            self._send_next_probe_candidate()
+            return
+        if (wrapped.status != GoalStatus.STATUS_SUCCEEDED or
+                not wrapped.result.path.poses):
+            self.get_logger().warning(
+                'Progressive probe candidate has no Nav2 path')
+            self._send_next_probe_candidate()
+            return
+        # A short probe must remain entirely inside mapped free space. Unlike
+        # the periodic final-path check, inspect every returned path pose.
+        known_ratio = self._known_path_ratio(
+            wrapped.result.path, sample_stride=1)
+        if known_ratio + 1e-9 < self.progressive_probe_known_ratio:
+            self.get_logger().warning(
+                f'Progressive probe path is only '
+                f'{known_ratio * 100.0:.0f}% known; trying another candidate')
+            self._send_next_probe_candidate()
+            return
+        candidate = self.probe_plan_candidate
+        if candidate is None:
+            self._abort_mission('Progressive probe candidate pose is missing')
+            return
+        self.probe_attempts += 1
+        self.get_logger().warning(
+            f'Dispatching progressive probe {self.probe_attempts}/'
+            f'{self.progressive_probe_max_attempts}: '
+            f'({candidate.pose.position.x:.2f}, '
+            f'{candidate.pose.position.y:.2f}), '
+            f'path_known={known_ratio * 100.0:.0f}%')
+        self._send_nav_goal(candidate, 'probe')
+
+    def _handle_probe_selection_exhausted(self):
+        self.probe_failures += 1
+        if self.probe_failures >= self.progressive_probe_max_failures:
+            self._abort_mission(
+                'No known-safe target-directed probe remains after '
+                f'{self.probe_failures} selection cycles')
+            return
+        self.get_logger().warning(
+            'No progressive probe candidate is currently safe and reachable; '
+            'resuming Roadmap once before trying again')
+        self.probe_settle_start_time = self._now_seconds()
+        self.state = 'PROBE_SETTLE'
+
+    def _complete_progressive_probe(self):
+        robot = self._robot_pose()
+        if robot is None or self.preparking_pose is None:
+            self._abort_mission(
+                'Cannot measure progress after target-directed probing')
+            return
+        target = self.preparking_pose.pose.position
+        remaining = math.hypot(target.x - robot[0], target.y - robot[1])
+        progress = self.probe_start_target_distance - remaining
+        if progress + 1e-9 < self.progressive_probe_min_progress:
+            self.probe_failures += 1
+            self.get_logger().warning(
+                f'Progressive probe reduced target distance by only '
+                f'{progress:.2f}m; failure '
+                f'{self.probe_failures}/{self.progressive_probe_max_failures}')
+            if self.probe_failures >= self.progressive_probe_max_failures:
+                self._abort_mission(
+                    'Progressive probing repeatedly failed to reduce target '
+                    'distance')
+                return
+        else:
+            self.probe_failures = 0
+            self.get_logger().info(
+                f'Progressive probe advanced {progress:.2f}m toward the '
+                f'pre-parking point; remaining distance={remaining:.2f}m')
+        self.probe_settle_start_time = self._now_seconds()
+        self.state = 'PROBE_SETTLE'
+
+    def _resume_roadmap_after_probe(self):
+        self.get_logger().info(
+            'Progressive probe settled; continuing the existing Roadmap '
+            'session with the updated SLAM map')
+        self._send_exploration_goal(new_session=False)
 
     def _send_final_goal(self):
         if self.final_candidate is None:
@@ -528,6 +852,14 @@ class RoadmapExploreMission(Node):
         """Send one bounded Nav2 motion whose completion is checked by XY only."""
         if self.final_goal_handle is not None:
             self._abort_mission('Cannot send Nav2 goal while another goal is active')
+            return
+        sending_states = {
+            'approach': 'SENDING_FINAL_NAVIGATION',
+            'search': 'SENDING_SEARCH_NAVIGATION',
+            'probe': 'SENDING_PROBE_NAVIGATION',
+        }
+        if purpose not in sending_states:
+            self._abort_mission(f'Unknown Nav2 mission purpose: {purpose}')
             return
 
         # A valid orientation is still required by NavigateToPose. The
@@ -547,10 +879,7 @@ class RoadmapExploreMission(Node):
         self.nav_cancel_reason = None
         self.nav_sequence += 1
         sequence = self.nav_sequence
-        self.state = (
-            'SENDING_FINAL_NAVIGATION'
-            if purpose == 'approach'
-            else 'SENDING_SEARCH_NAVIGATION')
+        self.state = sending_states[purpose]
         future = self.nav_client.send_goal_async(goal)
         future.add_done_callback(
             lambda result, seq=sequence: self._nav_goal_response(result, seq))
@@ -571,6 +900,13 @@ class RoadmapExploreMission(Node):
                     'Nav2 rejected one limited-search waypoint; trying the next')
                 self.final_goal_handle = None
                 self._send_next_search_goal()
+            elif self.active_nav_purpose == 'probe':
+                self.get_logger().warning(
+                    'Nav2 rejected one progressive probe; trying another')
+                self.final_goal_handle = None
+                self.active_nav_target = None
+                self.active_nav_purpose = None
+                self._send_next_probe_candidate()
             else:
                 self._abort_mission('Nav2 rejected the pre-parking goal')
             return
@@ -579,10 +915,12 @@ class RoadmapExploreMission(Node):
             return
         self.final_goal_handle = goal_handle
         purpose = self.active_nav_purpose
-        self.state = (
-            'FINAL_NAVIGATION'
-            if purpose == 'approach'
-            else 'SEARCH_NAVIGATION')
+        active_states = {
+            'approach': 'FINAL_NAVIGATION',
+            'search': 'SEARCH_NAVIGATION',
+            'probe': 'PROBE_NAVIGATION',
+        }
+        self.state = active_states[purpose]
         self.get_logger().info(
             f'Nav2 {purpose} goal accepted; arrival will use '
             f'XY tolerance {self.position_arrival_tolerance:.2f}m and ignore yaw')
@@ -657,6 +995,17 @@ class RoadmapExploreMission(Node):
                     f'Limited-search Nav2 waypoint failed with status {status}; '
                     'trying the next waypoint')
                 self._send_next_search_goal()
+            return
+
+        if purpose == 'probe':
+            if (status == GoalStatus.STATUS_SUCCEEDED or
+                    cancel_reason == 'position_reached'):
+                self._complete_progressive_probe()
+            else:
+                self.get_logger().warning(
+                    f'Progressive probe Nav2 goal failed with status {status}; '
+                    'trying another known-safe candidate')
+                self._send_next_probe_candidate()
             return
 
         self._abort_mission('Received a Nav2 result with no mission purpose')
@@ -943,13 +1292,15 @@ class RoadmapExploreMission(Node):
                     return False
         return True
 
-    def _known_path_ratio(self, path: Path) -> float:
+    def _known_path_ratio(self, path: Path, sample_stride: int = 2) -> float:
         if self.latest_map is None or not path.poses:
             return 0.0
+        sample_stride = max(1, int(sample_stride))
         known = 0
         total = 0
         for index, pose in enumerate(path.poses):
-            if index % 2 != 0 and index != len(path.poses) - 1:
+            if (index % sample_stride != 0 and
+                    index != len(path.poses) - 1):
                 continue
             cell = self._world_to_map(
                 self.latest_map, pose.pose.position.x, pose.pose.position.y)
@@ -1035,8 +1386,7 @@ class RoadmapExploreMission(Node):
             return
         previous_state = self.state
         self.state = 'FAILED'
-        if (self.explore_goal_handle is not None and
-                previous_state in ('EXPLORING', 'CANCELING_EXPLORATION')):
+        if self.explore_goal_handle is not None:
             self.explore_goal_handle.cancel_goal_async()
         if self.final_goal_handle is not None:
             self.final_goal_handle.cancel_goal_async()

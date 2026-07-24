@@ -52,6 +52,53 @@ def bounded_search_points(
     ]
 
 
+def progressive_probe_points(
+        origin: Point, target: Point, max_step: float, min_step: float,
+        fan_angles_deg: Sequence[float],
+        min_progress: float) -> List[Point]:
+    """
+    Generate short target-biased probe points without passing the target.
+
+    Each fan direction tries the longer step first and then the shorter step.
+    Candidates that do not reduce Euclidean distance to *target* by at least
+    ``min_progress`` are omitted. Map safety and Nav2 reachability are checked
+    by the mission node before any candidate is dispatched.
+    """
+    dx = target[0] - origin[0]
+    dy = target[1] - origin[1]
+    target_distance = math.hypot(dx, dy)
+    if target_distance <= 1e-9:
+        return []
+
+    bounded_max = min(max(0.0, max_step), target_distance)
+    bounded_min = min(max(0.0, min_step), bounded_max)
+    distances = [bounded_max]
+    if bounded_min > 1e-9 and abs(bounded_min - bounded_max) > 1e-9:
+        distances.append(bounded_min)
+
+    target_yaw = math.atan2(dy, dx)
+    required_progress = max(0.0, min_progress)
+    points: List[Point] = []
+    for angle_deg in fan_angles_deg:
+        yaw = target_yaw + math.radians(float(angle_deg))
+        for distance in distances:
+            if distance <= 1e-9:
+                continue
+            point = (
+                origin[0] + distance * math.cos(yaw),
+                origin[1] + distance * math.sin(yaw),
+            )
+            progress = target_distance - math.hypot(
+                target[0] - point[0], target[1] - point[1])
+            if progress + 1e-9 < required_progress:
+                continue
+            if not any(
+                    math.hypot(point[0] - other[0], point[1] - other[1])
+                    <= 1e-9 for other in points):
+                points.append(point)
+    return points
+
+
 def position_reached(robot: Point, goal: Point, tolerance: float) -> bool:
     """Position-only arrival check; intentionally has no heading input."""
     return math.hypot(robot[0] - goal[0], robot[1] - goal[1]) <= tolerance

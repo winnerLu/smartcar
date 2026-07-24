@@ -38,6 +38,16 @@ def generate_launch_description():
     search_lateral_step = LaunchConfiguration('search_lateral_step')
     search_timeout = LaunchConfiguration('search_timeout')
     parking_timeout = LaunchConfiguration('parking_timeout')
+    progressive_probe_enabled = LaunchConfiguration(
+        'progressive_probe_enabled')
+    exploration_stall_timeout = LaunchConfiguration(
+        'exploration_stall_timeout')
+    progressive_probe_step = LaunchConfiguration(
+        'progressive_probe_step')
+    progressive_probe_min_step = LaunchConfiguration(
+        'progressive_probe_min_step')
+    progressive_probe_max_attempts = LaunchConfiguration(
+        'progressive_probe_max_attempts')
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -92,6 +102,21 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'parking_timeout', default_value='45.0',
             description='视觉泊车接管后的超时(s)'),
+        DeclareLaunchArgument(
+            'progressive_probe_enabled', default_value='true',
+            description='Roadmap停滞时启用目标方向渐进探测'),
+        DeclareLaunchArgument(
+            'exploration_stall_timeout', default_value='8.0',
+            description='探索阶段无位置进展多久后触发渐进探测(s)'),
+        DeclareLaunchArgument(
+            'progressive_probe_step', default_value='0.35',
+            description='目标方向渐进探测的最大步长(m)'),
+        DeclareLaunchArgument(
+            'progressive_probe_min_step', default_value='0.20',
+            description='目标方向渐进探测的短步长(m)'),
+        DeclareLaunchArgument(
+            'progressive_probe_max_attempts', default_value='6',
+            description='整次任务最多发送的渐进探测次数'),
         DeclareLaunchArgument('return_to_start', default_value='false'),
         DeclareLaunchArgument('start_delay', default_value='5.0'),
 
@@ -175,6 +200,16 @@ def generate_launch_description():
                         search_timeout, value_type=float),
                     'parking_timeout': ParameterValue(
                         parking_timeout, value_type=float),
+                    'progressive_probe_enabled': ParameterValue(
+                        progressive_probe_enabled, value_type=bool),
+                    'exploration_stall_timeout': ParameterValue(
+                        exploration_stall_timeout, value_type=float),
+                    'progressive_probe_step': ParameterValue(
+                        progressive_probe_step, value_type=float),
+                    'progressive_probe_min_step': ParameterValue(
+                        progressive_probe_min_step, value_type=float),
+                    'progressive_probe_max_attempts': ParameterValue(
+                        progressive_probe_max_attempts, value_type=int),
                 },
             ],
         ),

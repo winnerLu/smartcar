@@ -43,6 +43,60 @@ def test_bounded_search_is_a_five_point_snake():
     assert all(abs(y - 3.0) <= 0.120001 for _, y in points)
 
 
+def test_progressive_probe_prioritizes_target_direction_and_short_fallback():
+    points = HANDOFF.progressive_probe_points(
+        (0.0, 0.0), (2.0, 0.0),
+        max_step=0.35, min_step=0.20,
+        fan_angles_deg=(0.0, 15.0, -15.0),
+        min_progress=0.12)
+
+    assert len(points) == 6
+    assert math.isclose(points[0][0], 0.35, abs_tol=1e-9)
+    assert math.isclose(points[0][1], 0.0, abs_tol=1e-9)
+    assert math.isclose(points[1][0], 0.20, abs_tol=1e-9)
+    assert math.isclose(points[1][1], 0.0, abs_tol=1e-9)
+    assert points[2][1] > 0.0
+    assert points[4][1] < 0.0
+    assert all(
+        math.hypot(2.0 - x, -y) <= 2.0 - 0.12 + 1e-9
+        for x, y in points)
+
+
+def test_progressive_probe_never_overshoots_near_target():
+    points = HANDOFF.progressive_probe_points(
+        (0.0, 0.0), (0.18, 0.0),
+        max_step=0.35, min_step=0.20,
+        fan_angles_deg=(0.0,), min_progress=0.10)
+
+    assert points == [(0.18, 0.0)]
+
+
+def test_progressive_probe_rejects_sideways_points_without_progress():
+    points = HANDOFF.progressive_probe_points(
+        (0.0, 0.0), (2.0, 0.0),
+        max_step=0.35, min_step=0.20,
+        fan_angles_deg=(90.0, -90.0), min_progress=0.05)
+
+    assert points == []
+
+
+def test_progressive_probe_runtime_wiring_is_conservative():
+    package_dir = Path(__file__).parents[1]
+    params = (package_dir / 'config' / 'roadmap_explorer.yaml').read_text()
+    mission = (
+        package_dir / 'scripts' / 'roadmap_explore_mission.py').read_text()
+    launch = (
+        package_dir / 'launch' / 'roadmap_exploration.launch.py').read_text()
+
+    assert 'progressive_probe_enabled: true' in params
+    assert 'progressive_probe_known_ratio: 1.0' in params
+    assert 'progressive_probe_max_attempts: 6' in params
+    assert 'Explore.Goal.CONTINUE_FROM_TERMINATED_SESSION' in mission
+    assert 'sample_stride=1' in mission
+    assert "'progressive_probe_enabled'" in launch
+    assert "'exploration_stall_timeout'" in launch
+
+
 def test_position_arrival_has_no_heading_requirement():
     # The helper has no yaw argument by design: a car facing any direction at
     # this XY position is considered ready for Tag acquisition.
