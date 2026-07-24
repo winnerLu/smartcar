@@ -17,7 +17,8 @@
               service_name="global_costmap/clear_entirely_global_costmap"/>
           </RecoveryNode>
         </RateController>
-        <FollowPath path="{path}" controller_id="FollowPath" server_timeout="2000"/>
+        <FollowPath path="{path}" controller_id="FollowPath"
+          goal_checker_id="goal_checker" server_timeout="2000"/>
       </PipelineSequence>
       <ReactiveFallback name="RoadmapRecoveryFallback">
         <GoalUpdated/>

@@ -97,6 +97,20 @@ def test_normal_navigation_behavior_tree_selects_normal_goal_checker():
     assert follow_path.attrib['goal_checker_id'] == 'goal_checker'
 
 
+def test_roadmap_navigation_behavior_tree_selects_normal_goal_checker():
+    roadmap_tree = (
+        Path(__file__).parents[2]
+        / 'roadmap-explorer'
+        / 'roadmap_explorer'
+        / 'xml'
+        / 'explore_to_pose.xml'
+    )
+    root = ET.parse(roadmap_tree).getroot()
+    follow_path = root.find('.//FollowPath')
+    assert follow_path is not None
+    assert follow_path.attrib['goal_checker_id'] == 'goal_checker'
+
+
 def test_position_goal_checker_keeps_normal_nav_checker_unchanged():
     navigation_dir = Path(__file__).parents[2] / 'car_navigation'
     params = (navigation_dir / 'config' / 'nav2_params.yaml').read_text()
