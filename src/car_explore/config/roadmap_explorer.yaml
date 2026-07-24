@@ -167,7 +167,8 @@ roadmap_explore_mission:
     # Roadmap长时间没有位置进展时，取消其高频无Frontier循环，用Nav2执行
     # 一次朝预泊车点的短距离已知区域探测，再继续原Roadmap会话。
     progressive_probe_enabled: true
-    exploration_stall_timeout: 8.0
+    # 降速后允许Nav2完成原地转向和窄道绕障，避免已规划路径在8秒时被取消。
+    exploration_stall_timeout: 12.0
     exploration_progress_distance: 0.10
     progressive_probe_step: 0.35
     progressive_probe_min_step: 0.20

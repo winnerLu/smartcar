@@ -123,8 +123,9 @@ controller_server:
       # 评价插件
       critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign",
                 "PathAlign", "PathDist", "GoalDist"]
-      # 提高对膨胀代价的权重，减少为了贴合全局路径而擦近障碍。
-      BaseObstacle.scale: 0.05
+      # 保持DWB默认量级；完整footprint负责硬碰撞约束，避免窄道中
+      # 障碍软代价压过路径跟踪，导致有全局路径却原地等待。
+      BaseObstacle.scale: 0.02
       PathAlign.scale: 32.0
       PathAlign.forward_point_distance: 0.1
       GoalAlign.scale: 24.0
@@ -164,8 +165,6 @@ global_costmap:
           clearing: true
           marking: true
           data_type: "LaserScan"
-          # 小物体只有少量激光命中时，短暂保留观测，避免一帧漏检就被清除。
-          observation_persistence: 0.5
           raytrace_max_range: 12.0
           obstacle_max_range: 10.0
       inflation_layer:
@@ -201,15 +200,16 @@ local_costmap:
           clearing: true
           marking: true
           data_type: "LaserScan"
-          # 局部控制器使用的障碍也短暂保留，避免小物体在相邻帧间闪烁。
-          observation_persistence: 0.5
+          # 保留约一个局部代价地图更新周期，兼顾小物体漏帧与转弯拖影。
+          observation_persistence: 0.2
           raytrace_max_range: 12.0
           obstacle_max_range: 10.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        # 在0.15m窄道配置与0.25m保守配置之间折中，为小障碍增加绕行余量。
-        inflation_radius: 0.20
+        # 窄通道由完整footprint和3cm padding提供硬边界；软膨胀不再
+        # 额外压窄Roadmap已经判定可通行的路径。
+        inflation_radius: 0.15
 
 # ==================== 行为树导航器 ====================
 bt_navigator:
