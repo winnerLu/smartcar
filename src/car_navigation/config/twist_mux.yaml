@@ -1,6 +1,7 @@
 # twist_mux 速度源仲裁
 # 多个速度源竞争,按 priority 高者优先;topic 超时后该源失效。
-# 输出到 /cmd_vel_raw,再经 collision_monitor 过滤为 /cmd_vel 给 car_base。
+# 输出到 /cmd_vel_raw。碰撞监控关闭时直接给car_base，开启时再过滤为
+# /cmd_vel_safe。
 twist_mux:
   ros__parameters:
     use_sim_time: false
@@ -20,5 +21,5 @@ twist_mux:
         topic: cmd_vel_teleop
         timeout: 0.5
         priority: 10
-    # twist_mux 输出话题(下游接 collision_monitor)
+    # twist_mux 输出话题（由launch remap到/cmd_vel_raw）。
     # 注:通过 launch remap 输出到 /cmd_vel_raw

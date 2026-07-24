@@ -132,7 +132,35 @@ roadmap_explore_mission:
     goal_forward: 3.0
     goal_left: 0.0
     goal_radius: 0.25
-    # 半径内落点必须与标称终点间无遮挡；隔墙不会因欧氏距离近而提前完成。
+    visual_parking_enabled: true
+    # Nav2只到达标称停车板中心前方的预泊车点；任务节点按XY距离主动取消，
+    # 不等待SimpleGoalChecker的终点航向对齐。
+    preparking_distance: 0.35
+    preparking_candidate_radius: 0.08
+    # 专用position_goal_checker为0.05m；任务节点在0.06m内主动交接。
+    position_arrival_tolerance: 0.06
+    # launch文件会覆盖为car_navigation内已安装的绝对路径。
+    position_only_bt_xml: ""
+    # 完整Tag的位姿、数量、重投影误差和内点数必须同时新鲜且稳定0.5秒。
+    tag_pose_topic: /apriltag_detector/tag_pose
+    tag_count_topic: /apriltag_detector/visible_tag_count
+    tag_error_topic: /apriltag_detector/reprojection_error
+    tag_inlier_topic: /apriltag_detector/inlier_count
+    parking_complete_topic: /board_parker/parking_complete
+    parking_enable_service: /board_parker/set_enabled
+    tag_max_age: 0.40
+    tag_confirm_time: 0.50
+    tag_max_reprojection_error: 3.0
+    tag_min_inlier_points: 4
+    tag_acquire_timeout: 2.0
+    tag_handoff_max_target_distance: 0.75
+    # 无Tag时只允许Nav2在预泊车点附近做5个代价地图验证过的搜索点。
+    search_forward_step: 0.10
+    search_lateral_step: 0.14
+    search_dwell_time: 1.5
+    search_timeout: 25.0
+    parking_timeout: 45.0
+    # 预泊车点与标称终点间必须无遮挡；隔墙不会因欧氏距离近而提前交接。
     # 只有目标位于已知安全自由区，且Nav2路径至少85%已知，才停止Roadmap探索。
     direct_path_known_ratio: 0.85
     direct_check_period: 1.0

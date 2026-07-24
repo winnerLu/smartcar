@@ -11,4 +11,14 @@ install(PROGRAMS
   scripts/roadmap_explore_mission.py
   DESTINATION lib/${PROJECT_NAME})
 
+install(FILES
+  scripts/roadmap_handoff.py
+  DESTINATION lib/${PROJECT_NAME})
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_pytest REQUIRED)
+  ament_add_pytest_test(test_roadmap_handoff
+    test/test_roadmap_handoff.py)
+endif()
+
 ament_package()

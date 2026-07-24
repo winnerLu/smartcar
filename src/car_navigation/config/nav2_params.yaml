@@ -1,7 +1,8 @@
 # Nav2 参数(第一版:静态图 + AMCL 定位 + NavFn 全局 + DWB 局部)
 # 车体:两轮差速,约 20cm(宽) x 25cm(长),低速。
 # frame:map / odom / base_link / base_laser,scan 话题 /scan(10Hz)。
-# 注:第一版 Nav2 直接发 /cmd_vel 给 car_base;后续插入 twist_mux 改为 /cmd_vel_safe。
+# Nav2保持发布/cmd_vel。可选twist_mux仲裁后输出/cmd_vel_raw；
+# 只有开启collision_monitor时才继续输出/cmd_vel_safe。
 
 # ==================== 地图服务 ====================
 # yaml_filename 会被 navigation.launch.py 的 map:= 参数覆盖(nav2_bringup RewrittenYaml)
@@ -60,7 +61,7 @@ controller_server:
     min_x_velocity_threshold: 0.001
     min_theta_velocity_threshold: 0.001
     # 到点判定
-    goal_checker_plugins: ["goal_checker"]
+    goal_checker_plugins: ["goal_checker", "position_goal_checker"]
     controller_plugins: ["FollowPath"]
     progress_checker_plugins: ["progress_checker"]
 
@@ -76,6 +77,14 @@ controller_server:
       xy_goal_tolerance: 0.15    # 到点位置容差(m)
       yaw_goal_tolerance: 0.20   # 到点航向容差(rad)
       stateful: true
+
+    # 仅由Roadmap→视觉泊车专用行为树选择。小范围搜索必须真的移动，
+    # 但无需为一个仅用于看Tag的临时点旋转到指定航向。
+    position_goal_checker:
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.05
+      yaw_goal_tolerance: 6.283185
+      stateful: false
 
     FollowPath:
       plugin: "dwb_core::DWBLocalPlanner"

@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Run Roadmap Explorer toward an approximate relative target, then hand off to Nav2."""
+"""Run goal-directed Roadmap exploration, then hand off Nav2 to visual parking."""
 
 import math
-from typing import Optional, Tuple
+import os
+from typing import List, Optional, Tuple
 
 from action_msgs.msg import GoalStatus
+from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import PoseStamped
 from nav2_msgs.action import ComputePathToPose, NavigateToPose
 from nav_msgs.msg import OccupancyGrid, Path
@@ -15,7 +17,17 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
 from roadmap_explorer_msgs.action import Explore
+from std_msgs.msg import Bool, Float32, UInt32
+from std_srvs.srv import SetBool
 from tf2_ros import Buffer, TransformException, TransformListener
+
+from roadmap_handoff import (
+    Point,
+    bounded_search_points,
+    position_reached,
+    preparking_point,
+    tag_observation_valid,
+)
 
 
 Cell = Tuple[int, int]
@@ -35,23 +47,67 @@ class RoadmapExploreMission(Node):
         self.map_sub = self.create_subscription(
             OccupancyGrid, self.map_topic, self._map_callback, map_qos)
         target_qos = QoSProfile(depth=1)
+        target_qos.reliability = ReliabilityPolicy.RELIABLE
         target_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
         self.target_pub = self.create_publisher(
             PoseStamped, '~/target_pose', target_qos)
+        self.preparking_pub = self.create_publisher(
+            PoseStamped, '~/preparking_pose', target_qos)
+
+        self.tag_pose_sub = self.create_subscription(
+            PoseStamped, self.tag_pose_topic, self._tag_pose_callback, 10)
+        self.tag_count_sub = self.create_subscription(
+            UInt32, self.tag_count_topic, self._tag_count_callback, 10)
+        self.tag_error_sub = self.create_subscription(
+            Float32, self.tag_error_topic, self._tag_error_callback, 10)
+        self.tag_inlier_sub = self.create_subscription(
+            UInt32, self.tag_inlier_topic, self._tag_inlier_callback, 10)
+        parking_qos = QoSProfile(depth=1)
+        parking_qos.reliability = ReliabilityPolicy.RELIABLE
+        parking_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
+        self.parking_complete_sub = self.create_subscription(
+            Bool, self.parking_complete_topic,
+            self._parking_complete_callback, parking_qos)
 
         self.tf_buffer = Buffer(cache_time=Duration(seconds=30.0))
         self.tf_listener = TransformListener(self.tf_buffer, self)
         self.explore_client = ActionClient(self, Explore, 'roadmap_explorer')
         self.plan_client = ActionClient(self, ComputePathToPose, 'compute_path_to_pose')
         self.nav_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
+        self.parking_client = self.create_client(
+            SetBool, self.parking_enable_service)
 
         self.latest_map: Optional[OccupancyGrid] = None
         self.start_pose: Optional[PoseStamped] = None
         self.target_pose: Optional[PoseStamped] = None
+        self.preparking_pose: Optional[PoseStamped] = None
         self.explore_goal_handle = None
         self.final_goal_handle = None
         self.final_candidate: Optional[PoseStamped] = None
+        self.active_nav_target: Optional[PoseStamped] = None
+        self.active_nav_purpose: Optional[str] = None
+        self.nav_cancel_reason: Optional[str] = None
+        self.nav_sequence = 0
         self.plan_in_progress = False
+        self.search_points: List[Point] = []
+        self.search_index = 0
+        self.search_start_time = 0.0
+        self.search_wait_start_time = 0.0
+        self.acquisition_start_time = 0.0
+        self.acquisition_after_search = False
+        self.parking_start_time = 0.0
+        self.parking_complete = False
+        self.parking_reset_requested = False
+        self.parking_reset_complete = not self.visual_parking_enabled
+        self.tag_visible_count = 0
+        self.tag_reprojection_error = math.inf
+        self.tag_inlier_count = 0
+        self.last_tag_pose_time = 0.0
+        self.last_tag_count_time = 0.0
+        self.last_tag_error_time = 0.0
+        self.last_tag_inlier_time = 0.0
+        self.tag_stable_since: Optional[float] = None
+        self.tag_confirmation_reported = False
         self.state = 'STARTING'
         self.node_start_time = self._now_seconds()
         self.mission_start_time = 0.0
@@ -71,6 +127,28 @@ class RoadmapExploreMission(Node):
             'goal_forward': 3.0,
             'goal_left': 0.0,
             'goal_radius': 0.25,
+            'visual_parking_enabled': True,
+            'preparking_distance': 0.35,
+            'preparking_candidate_radius': 0.08,
+            'position_arrival_tolerance': 0.06,
+            'position_only_bt_xml': '',
+            'tag_pose_topic': '/apriltag_detector/tag_pose',
+            'tag_count_topic': '/apriltag_detector/visible_tag_count',
+            'tag_error_topic': '/apriltag_detector/reprojection_error',
+            'tag_inlier_topic': '/apriltag_detector/inlier_count',
+            'parking_complete_topic': '/board_parker/parking_complete',
+            'parking_enable_service': '/board_parker/set_enabled',
+            'tag_max_age': 0.40,
+            'tag_confirm_time': 0.50,
+            'tag_max_reprojection_error': 3.0,
+            'tag_min_inlier_points': 4,
+            'tag_acquire_timeout': 2.0,
+            'tag_handoff_max_target_distance': 0.75,
+            'search_forward_step': 0.10,
+            'search_lateral_step': 0.14,
+            'search_dwell_time': 1.5,
+            'search_timeout': 25.0,
+            'parking_timeout': 45.0,
             'direct_path_known_ratio': 0.85,
             'direct_check_period': 1.0,
             'mission_timeout': 300.0,
@@ -86,6 +164,16 @@ class RoadmapExploreMission(Node):
                 'map_frame', 'base_frame', 'map_topic', 'planner_id',
                 'start_delay', 'return_to_start', 'goal_directed_mode',
                 'goal_forward', 'goal_left', 'goal_radius',
+                'visual_parking_enabled', 'preparking_distance',
+                'preparking_candidate_radius', 'position_arrival_tolerance',
+                'position_only_bt_xml',
+                'tag_pose_topic', 'tag_count_topic', 'tag_error_topic',
+                'tag_inlier_topic', 'parking_complete_topic',
+                'parking_enable_service', 'tag_max_age', 'tag_confirm_time',
+                'tag_max_reprojection_error', 'tag_min_inlier_points',
+                'tag_acquire_timeout', 'tag_handoff_max_target_distance',
+                'search_forward_step', 'search_lateral_step',
+                'search_dwell_time', 'search_timeout', 'parking_timeout',
                 'direct_path_known_ratio', 'direct_check_period',
                 'mission_timeout', 'free_threshold', 'occupied_threshold',
                 'endpoint_clearance'):
@@ -96,7 +184,39 @@ class RoadmapExploreMission(Node):
         self.goal_directed_mode = bool(self.goal_directed_mode)
         self.goal_forward = float(self.goal_forward)
         self.goal_left = float(self.goal_left)
-        self.goal_radius = float(self.goal_radius)
+        self.goal_radius = max(0.0, float(self.goal_radius))
+        self.visual_parking_enabled = bool(self.visual_parking_enabled)
+        self.preparking_distance = max(
+            0.0, float(self.preparking_distance))
+        self.preparking_candidate_radius = max(
+            0.0, float(self.preparking_candidate_radius))
+        self.position_arrival_tolerance = max(
+            0.01, float(self.position_arrival_tolerance))
+        if not self.position_only_bt_xml:
+            self.position_only_bt_xml = os.path.join(
+                get_package_share_directory('car_navigation'),
+                'behavior_trees', 'navigate_to_pose_position_only.xml')
+        if not os.path.isfile(str(self.position_only_bt_xml)):
+            raise RuntimeError(
+                'Position-only Nav2 behavior tree does not exist: '
+                f'{self.position_only_bt_xml}')
+        self.tag_max_age = max(0.05, float(self.tag_max_age))
+        self.tag_confirm_time = max(0.0, float(self.tag_confirm_time))
+        self.tag_max_reprojection_error = max(
+            0.0, float(self.tag_max_reprojection_error))
+        self.tag_min_inlier_points = max(
+            4, int(self.tag_min_inlier_points))
+        self.tag_acquire_timeout = max(
+            0.0, float(self.tag_acquire_timeout))
+        self.tag_handoff_max_target_distance = max(
+            0.05, float(self.tag_handoff_max_target_distance))
+        self.search_forward_step = min(
+            abs(float(self.search_forward_step)), self.goal_radius)
+        self.search_lateral_step = min(
+            abs(float(self.search_lateral_step)), self.goal_radius)
+        self.search_dwell_time = max(0.0, float(self.search_dwell_time))
+        self.search_timeout = max(0.0, float(self.search_timeout))
+        self.parking_timeout = max(0.0, float(self.parking_timeout))
         self.direct_path_known_ratio = float(self.direct_path_known_ratio)
         self.direct_check_period = float(self.direct_check_period)
         self.mission_timeout = float(self.mission_timeout)
@@ -106,6 +226,24 @@ class RoadmapExploreMission(Node):
 
     def _map_callback(self, msg: OccupancyGrid):
         self.latest_map = msg
+
+    def _tag_pose_callback(self, _msg: PoseStamped):
+        self.last_tag_pose_time = self._now_seconds()
+
+    def _tag_count_callback(self, msg: UInt32):
+        self.tag_visible_count = int(msg.data)
+        self.last_tag_count_time = self._now_seconds()
+
+    def _tag_error_callback(self, msg: Float32):
+        self.tag_reprojection_error = float(msg.data)
+        self.last_tag_error_time = self._now_seconds()
+
+    def _tag_inlier_callback(self, msg: UInt32):
+        self.tag_inlier_count = int(msg.data)
+        self.last_tag_inlier_time = self._now_seconds()
+
+    def _parking_complete_callback(self, msg: Bool):
+        self.parking_complete = bool(msg.data)
 
     def _tick(self):
         now = self._now_seconds()
@@ -118,14 +256,61 @@ class RoadmapExploreMission(Node):
                 now - self.mission_start_time >= self.mission_timeout):
             self._abort_mission('Mission timeout reached before the target became reachable')
             return
-        if (self.state != 'EXPLORING' or not self.goal_directed_mode or
-                self.plan_in_progress or now < self.next_direct_check_time):
+
+        if self.state == 'EXPLORING':
+            if (not self.goal_directed_mode or self.plan_in_progress or
+                    now < self.next_direct_check_time):
+                return
+            self.next_direct_check_time = now + self.direct_check_period
+            candidate = self._known_safe_target_pose()
+            if candidate is not None:
+                self._request_direct_path(candidate)
             return
 
-        self.next_direct_check_time = now + self.direct_check_period
-        candidate = self._known_safe_target_pose()
-        if candidate is not None:
-            self._request_direct_path(candidate)
+        if self.state in ('FINAL_NAVIGATION', 'SEARCH_NAVIGATION'):
+            if (self.visual_parking_enabled and
+                    self._tag_confirmed(now) and
+                    self._inside_tag_handoff_region()):
+                self._cancel_active_nav('tag_confirmed')
+                return
+            if self._active_nav_position_reached():
+                self._cancel_active_nav('position_reached')
+                return
+            if (self.state == 'SEARCH_NAVIGATION' and
+                    self._search_timed_out(now)):
+                self._cancel_active_nav('search_timeout')
+            return
+
+        if self.state == 'TAG_ACQUISITION':
+            if self._tag_confirmed(now):
+                self._activate_visual_parking()
+            elif now - self.acquisition_start_time >= self.tag_acquire_timeout:
+                if self.acquisition_after_search:
+                    self._send_next_search_goal()
+                else:
+                    self._begin_limited_search()
+            return
+
+        if self.state == 'SEARCH_WAIT':
+            if self._tag_confirmed(now):
+                self._activate_visual_parking()
+            elif self._search_timed_out(now):
+                self._abort_mission(
+                    'Limited tag search timed out without one complete tag')
+            elif now - self.search_wait_start_time >= self.search_dwell_time:
+                self._send_next_search_goal()
+            return
+
+        if self.state == 'VISUAL_PARKING':
+            if self.parking_complete:
+                self._set_parking_enabled(False)
+                self.state = 'COMPLETE'
+                self.get_logger().info(
+                    'Goal-directed mission complete: visual parking confirmed')
+            elif (self.parking_timeout > 0.0 and
+                    now - self.parking_start_time >= self.parking_timeout):
+                self._set_parking_enabled(False)
+                self._abort_mission('Visual parking timed out')
 
     def _try_start(self, now: float):
         if now - self.node_start_time < self.start_delay:
@@ -135,8 +320,22 @@ class RoadmapExploreMission(Node):
             return
         if (not self.explore_client.server_is_ready() or
                 not self.nav_client.server_is_ready() or
-                (self.goal_directed_mode and not self.plan_client.server_is_ready())):
-            self._log_waiting('Waiting for Roadmap Explorer and Nav2 action servers')
+                (self.goal_directed_mode and not self.plan_client.server_is_ready()) or
+                (self.goal_directed_mode and self.visual_parking_enabled and
+                 not self.parking_client.service_is_ready())):
+            self._log_waiting(
+                'Waiting for Roadmap Explorer, Nav2, and visual parking interfaces')
+            return
+        if (self.goal_directed_mode and self.visual_parking_enabled and
+                not self.parking_reset_complete):
+            if not self.parking_reset_requested:
+                self.parking_reset_requested = True
+                request = SetBool.Request()
+                request.data = False
+                future = self.parking_client.call_async(request)
+                future.add_done_callback(self._parking_reset_done)
+            self._log_waiting(
+                'Waiting for visual parking to release velocity ownership')
             return
 
         robot = self._robot_pose()
@@ -147,13 +346,20 @@ class RoadmapExploreMission(Node):
         goal_x = x + math.cos(yaw) * self.goal_forward - math.sin(yaw) * self.goal_left
         goal_y = y + math.sin(yaw) * self.goal_forward + math.cos(yaw) * self.goal_left
         self.target_pose = self._make_pose(goal_x, goal_y, yaw)
+        approach_x, approach_y, approach_yaw = preparking_point(
+            (x, y), (goal_x, goal_y), self.preparking_distance)
+        self.preparking_pose = self._make_pose(
+            approach_x, approach_y, approach_yaw)
         self.target_pub.publish(self.target_pose)
+        self.preparking_pub.publish(self.preparking_pose)
         self.mission_start_time = now
         self.state = 'SENDING_EXPLORATION'
         self.get_logger().info(
             f'Recorded start pose ({x:.2f}, {y:.2f}, yaw={math.degrees(yaw):.1f}deg); '
             f'Roadmap target=({goal_x:.2f}, {goal_y:.2f}), '
-            f'relative=({self.goal_forward:.2f}m forward, {self.goal_left:.2f}m left)')
+            f'pre-parking=({approach_x:.2f}, {approach_y:.2f}), '
+            f'relative=({self.goal_forward:.2f}m forward, {self.goal_left:.2f}m left). '
+            'Final Nav2 arrival uses XY position only; yaw is not a completion condition.')
 
         goal = Explore.Goal()
         goal.exploration_bringup_mode = Explore.Goal.NEW_EXPLORATION_SESSION
@@ -161,6 +367,22 @@ class RoadmapExploreMission(Node):
         goal.session_name.data = 'smartcar_goal_directed'
         future = self.explore_client.send_goal_async(goal)
         future.add_done_callback(self._explore_goal_response)
+
+    def _parking_reset_done(self, future):
+        try:
+            response = future.result()
+        except Exception as exc:
+            self._abort_mission(
+                f'Could not disable visual parking before exploration: {exc}')
+            return
+        if not response.success:
+            self._abort_mission(
+                f'Visual parking did not release velocity ownership: '
+                f'{response.message}')
+            return
+        self.parking_reset_complete = True
+        self.get_logger().info(
+            'Visual parking is inactive; Nav2 owns velocity during exploration')
 
     def _explore_goal_response(self, future):
         try:
@@ -264,8 +486,9 @@ class RoadmapExploreMission(Node):
 
         self.final_candidate = wrapped.result.path.poses[-1]
         self.get_logger().info(
-            f'Target has a safe path with {known_ratio * 100.0:.0f}% known cells; '
-            'canceling Roadmap exploration and switching to final Nav2 navigation')
+            f'Pre-parking point has a safe path with '
+            f'{known_ratio * 100.0:.0f}% known cells; canceling Roadmap '
+            'exploration and switching to position-only final Nav2 navigation')
         self._cancel_exploration_for_final_goal()
 
     def _cancel_exploration_for_final_goal(self):
@@ -299,40 +522,326 @@ class RoadmapExploreMission(Node):
         if self.final_candidate is None:
             self._abort_mission('Final goal pose is missing')
             return
-        goal = NavigateToPose.Goal()
-        self.final_candidate.header.stamp = self.get_clock().now().to_msg()
-        goal.pose = self.final_candidate
-        self.state = 'FINAL_NAVIGATION'
-        future = self.nav_client.send_goal_async(goal)
-        future.add_done_callback(self._final_goal_response)
+        self._send_nav_goal(self.final_candidate, 'approach')
 
-    def _final_goal_response(self, future):
+    def _send_nav_goal(self, pose: PoseStamped, purpose: str):
+        """Send one bounded Nav2 motion whose completion is checked by XY only."""
+        if self.final_goal_handle is not None:
+            self._abort_mission('Cannot send Nav2 goal while another goal is active')
+            return
+
+        # A valid orientation is still required by NavigateToPose. The
+        # mission-only behavior tree explicitly selects position_goal_checker,
+        # so this orientation is never a completion condition. Keeping current
+        # yaw also avoids requesting an arbitrary final turn during search.
+        robot = self._robot_pose()
+        yaw = robot[2] if robot is not None else 0.0
+        nav_pose = self._make_pose(
+            pose.pose.position.x, pose.pose.position.y, yaw)
+        goal = NavigateToPose.Goal()
+        goal.pose = nav_pose
+        if self.position_only_bt_xml:
+            goal.behavior_tree = str(self.position_only_bt_xml)
+        self.active_nav_target = nav_pose
+        self.active_nav_purpose = purpose
+        self.nav_cancel_reason = None
+        self.nav_sequence += 1
+        sequence = self.nav_sequence
+        self.state = (
+            'SENDING_FINAL_NAVIGATION'
+            if purpose == 'approach'
+            else 'SENDING_SEARCH_NAVIGATION')
+        future = self.nav_client.send_goal_async(goal)
+        future.add_done_callback(
+            lambda result, seq=sequence: self._nav_goal_response(result, seq))
+
+    def _nav_goal_response(self, future, sequence: int):
         try:
             goal_handle = future.result()
         except Exception as exc:
-            self._abort_mission(f'Final NavigateToPose request failed: {exc}')
+            self._abort_mission(f'NavigateToPose request failed: {exc}')
+            return
+        if sequence != self.nav_sequence:
+            if goal_handle.accepted:
+                goal_handle.cancel_goal_async()
             return
         if not goal_handle.accepted:
-            self._abort_mission('Nav2 rejected the final target goal')
+            if self.active_nav_purpose == 'search':
+                self.get_logger().warning(
+                    'Nav2 rejected one limited-search waypoint; trying the next')
+                self.final_goal_handle = None
+                self._send_next_search_goal()
+            else:
+                self._abort_mission('Nav2 rejected the pre-parking goal')
             return
         if self.state in ('FAILED', 'COMPLETE'):
             goal_handle.cancel_goal_async()
             return
         self.final_goal_handle = goal_handle
-        goal_handle.get_result_async().add_done_callback(self._final_result)
+        purpose = self.active_nav_purpose
+        self.state = (
+            'FINAL_NAVIGATION'
+            if purpose == 'approach'
+            else 'SEARCH_NAVIGATION')
+        self.get_logger().info(
+            f'Nav2 {purpose} goal accepted; arrival will use '
+            f'XY tolerance {self.position_arrival_tolerance:.2f}m and ignore yaw')
+        goal_handle.get_result_async().add_done_callback(
+            lambda result, seq=sequence: self._nav_result(result, seq))
 
-    def _final_result(self, future):
+    def _cancel_active_nav(self, reason: str):
+        if self.final_goal_handle is None or self.state == 'CANCELING_NAV':
+            return
+        self.nav_cancel_reason = reason
+        self.state = 'CANCELING_NAV'
+        future = self.final_goal_handle.cancel_goal_async()
+        future.add_done_callback(self._nav_cancel_done)
+        self.get_logger().info(
+            f'Canceling Nav2 {self.active_nav_purpose} goal: {reason}')
+
+    def _nav_cancel_done(self, future):
+        try:
+            response = future.result()
+        except Exception as exc:
+            self._abort_mission(f'Failed to cancel Nav2 before handoff: {exc}')
+            return
+        if not response.goals_canceling:
+            self.get_logger().warning(
+                'Nav2 goal was already terminal while cancellation was requested')
+
+    def _nav_result(self, future, sequence: int):
+        if sequence != self.nav_sequence:
+            return
         try:
             status = future.result().status
         except Exception as exc:
-            self._abort_mission(f'Final NavigateToPose result failed: {exc}')
+            self._abort_mission(f'NavigateToPose result failed: {exc}')
             return
-        if status == GoalStatus.STATUS_SUCCEEDED:
-            self.state = 'COMPLETE'
+
+        purpose = self.active_nav_purpose
+        cancel_reason = self.nav_cancel_reason
+        self.final_goal_handle = None
+        self.active_nav_target = None
+        self.active_nav_purpose = None
+        self.nav_cancel_reason = None
+        if self.state in ('FAILED', 'COMPLETE'):
+            return
+
+        if purpose == 'approach':
+            reached_position = cancel_reason == 'position_reached'
+            tag_seen = cancel_reason == 'tag_confirmed'
+            if status == GoalStatus.STATUS_SUCCEEDED or reached_position or tag_seen:
+                if self.visual_parking_enabled:
+                    self._start_tag_acquisition(after_search=False)
+                else:
+                    self.state = 'COMPLETE'
+                    self.get_logger().info(
+                        'Goal-directed mission complete at pre-parking XY; '
+                        'final yaw was intentionally ignored')
+                return
+            self._abort_mission(
+                f'Pre-parking navigation failed with status {status}')
+            return
+
+        if purpose == 'search':
+            if cancel_reason == 'search_timeout':
+                self._abort_mission(
+                    'Limited tag search timed out without one complete tag')
+            elif cancel_reason == 'tag_confirmed':
+                self._start_tag_acquisition(after_search=True)
+            elif (status == GoalStatus.STATUS_SUCCEEDED or
+                  cancel_reason == 'position_reached'):
+                self._start_search_wait()
+            else:
+                self.get_logger().warning(
+                    f'Limited-search Nav2 waypoint failed with status {status}; '
+                    'trying the next waypoint')
+                self._send_next_search_goal()
+            return
+
+        self._abort_mission('Received a Nav2 result with no mission purpose')
+
+    def _active_nav_position_reached(self) -> bool:
+        if self.active_nav_target is None:
+            return False
+        robot = self._robot_pose()
+        if robot is None:
+            return False
+        goal = self.active_nav_target.pose.position
+        return position_reached(
+            (robot[0], robot[1]), (goal.x, goal.y),
+            self.position_arrival_tolerance)
+
+    def _reset_tag_confirmation(self):
+        self.tag_stable_since = None
+        self.tag_confirmation_reported = False
+
+    def _tag_quality_valid(self, now: float) -> bool:
+        return tag_observation_valid(
+            self.tag_visible_count,
+            self.tag_reprojection_error,
+            self.tag_inlier_count,
+            (
+                now - self.last_tag_pose_time,
+                now - self.last_tag_count_time,
+                now - self.last_tag_error_time,
+                now - self.last_tag_inlier_time,
+            ),
+            self.tag_max_age,
+            self.tag_max_reprojection_error,
+            self.tag_min_inlier_points)
+
+    def _tag_confirmed(self, now: float) -> bool:
+        if not self._tag_quality_valid(now):
+            self._reset_tag_confirmation()
+            return False
+        if self.tag_stable_since is None:
+            self.tag_stable_since = now
+            return self.tag_confirm_time <= 0.0
+        confirmed = now - self.tag_stable_since >= self.tag_confirm_time
+        if confirmed and not self.tag_confirmation_reported:
+            self.tag_confirmation_reported = True
             self.get_logger().info(
-                'Goal-directed Roadmap mission complete: Nav2 reached the target')
-        else:
-            self._abort_mission(f'Final target navigation failed with status {status}')
+                'Complete AprilTag handoff confirmed: '
+                f'tags={self.tag_visible_count}, '
+                f'inliers={self.tag_inlier_count}, '
+                f'rmse={self.tag_reprojection_error:.2f}px')
+        return confirmed
+
+    def _inside_tag_handoff_region(self) -> bool:
+        if self.target_pose is None:
+            return False
+        robot = self._robot_pose()
+        if robot is None:
+            return False
+        target = self.target_pose.pose.position
+        return position_reached(
+            (robot[0], robot[1]), (target.x, target.y),
+            self.tag_handoff_max_target_distance)
+
+    def _start_tag_acquisition(self, after_search: bool):
+        self.state = 'TAG_ACQUISITION'
+        self.acquisition_start_time = self._now_seconds()
+        self.acquisition_after_search = after_search
+        self._reset_tag_confirmation()
+        self.get_logger().info(
+            'Nav2 is stopped; waiting for a fresh complete Tag before '
+            'transferring velocity ownership to visual parking')
+
+    def _begin_limited_search(self):
+        if self.final_candidate is None or self.target_pose is None:
+            self._abort_mission('Cannot search for Tag without a pre-parking pose')
+            return
+        origin = self.final_candidate.pose.position
+        target = self.target_pose.pose.position
+        approach_yaw = math.atan2(target.y - origin.y, target.x - origin.x)
+        self.search_points = bounded_search_points(
+            (origin.x, origin.y), approach_yaw,
+            self.search_forward_step, self.search_lateral_step)
+        self.search_index = 0
+        self.search_start_time = self._now_seconds()
+        self.get_logger().warning(
+            'No complete Tag at the pre-parking point; starting bounded '
+            f'Nav2 search ({len(self.search_points)} waypoints, '
+            f'forward<={self.search_forward_step:.2f}m, '
+            f'lateral<={self.search_lateral_step:.2f}m, '
+            f'timeout={self.search_timeout:.1f}s)')
+        self._send_next_search_goal()
+
+    def _send_next_search_goal(self):
+        now = self._now_seconds()
+        if self._search_timed_out(now):
+            self._abort_mission(
+                'Limited tag search timed out without one complete tag')
+            return
+        while self.search_index < len(self.search_points):
+            index = self.search_index
+            point = self.search_points[index]
+            self.search_index += 1
+            if not self._safe_search_point(point):
+                self.get_logger().warning(
+                    f'Skipping unsafe/unknown search waypoint {index + 1}: '
+                    f'({point[0]:.2f}, {point[1]:.2f})')
+                continue
+            robot = self._robot_pose()
+            yaw = robot[2] if robot is not None else 0.0
+            pose = self._make_pose(point[0], point[1], yaw)
+            self._reset_tag_confirmation()
+            self.get_logger().info(
+                f'Sending limited-search waypoint {index + 1}/'
+                f'{len(self.search_points)}: ({point[0]:.2f}, {point[1]:.2f})')
+            self._send_nav_goal(pose, 'search')
+            return
+        self._abort_mission(
+            'Limited tag search exhausted all safe waypoints without a complete Tag')
+
+    def _start_search_wait(self):
+        self.state = 'SEARCH_WAIT'
+        self.search_wait_start_time = self._now_seconds()
+        self._reset_tag_confirmation()
+        self.get_logger().info(
+            f'Position-only search waypoint reached; observing for '
+            f'{self.search_dwell_time:.1f}s without requiring a final yaw')
+
+    def _search_timed_out(self, now: float) -> bool:
+        return (
+            self.search_start_time > 0.0 and
+            self.search_timeout > 0.0 and
+            now - self.search_start_time >= self.search_timeout)
+
+    def _safe_search_point(self, point: Point) -> bool:
+        if self.latest_map is None:
+            return False
+        cell = self._world_to_map(self.latest_map, point[0], point[1])
+        return (
+            cell is not None and
+            self._is_free(self.latest_map, cell[0], cell[1]) and
+            self._safe_endpoint(self.latest_map, cell)
+        )
+
+    def _activate_visual_parking(self):
+        if self.state in ('ACTIVATING_PARKING', 'VISUAL_PARKING'):
+            return
+        if self.final_goal_handle is not None:
+            self._abort_mission(
+                'Refusing visual handoff while a Nav2 goal is still active')
+            return
+        if not self.parking_client.service_is_ready():
+            self._abort_mission('Visual parking enable service is unavailable')
+            return
+        self.state = 'ACTIVATING_PARKING'
+        self.parking_complete = False
+        request = SetBool.Request()
+        request.data = True
+        future = self.parking_client.call_async(request)
+        future.add_done_callback(self._parking_enable_done)
+
+    def _parking_enable_done(self, future):
+        try:
+            response = future.result()
+        except Exception as exc:
+            self._abort_mission(f'Visual parking activation failed: {exc}')
+            return
+        if self.state == 'FAILED':
+            if response.success:
+                self._set_parking_enabled(False)
+            return
+        if not response.success:
+            self._abort_mission(
+                f'Visual parking refused handoff: {response.message}')
+            return
+        self.state = 'VISUAL_PARKING'
+        self.parking_start_time = self._now_seconds()
+        self.get_logger().info(
+            'Nav2 velocity ownership released; visual parking is active: '
+            f'{response.message}')
+
+    def _set_parking_enabled(self, enabled: bool):
+        if not self.parking_client.service_is_ready():
+            return None
+        request = SetBool.Request()
+        request.data = enabled
+        return self.parking_client.call_async(request)
 
     def _send_return_goal(self):
         if self.start_pose is None:
@@ -360,7 +869,8 @@ class RoadmapExploreMission(Node):
             self._abort_mission('Return-to-start navigation failed')
 
     def _known_safe_target_pose(self) -> Optional[PoseStamped]:
-        if self.latest_map is None or self.target_pose is None:
+        if (self.latest_map is None or self.target_pose is None or
+                self.preparking_pose is None):
             return None
         msg = self.latest_map
         target = self.target_pose.pose.position
@@ -368,21 +878,25 @@ class RoadmapExploreMission(Node):
         if target_cell is None or not self._is_free(
                 msg, target_cell[0], target_cell[1]):
             return None
-        robot = self._robot_pose()
-        if robot is None:
+        approach = self.preparking_pose.pose.position
+        approach_cell = self._world_to_map(msg, approach.x, approach.y)
+        if approach_cell is None:
             return None
 
-        candidates = [(0.0, target_cell, target.x, target.y)]
-        radius_cells = max(0, math.ceil(self.goal_radius / msg.info.resolution))
-        for mx in range(target_cell[0] - radius_cells,
-                        target_cell[0] + radius_cells + 1):
-            for my in range(target_cell[1] - radius_cells,
-                            target_cell[1] + radius_cells + 1):
+        candidates = [(0.0, approach_cell, approach.x, approach.y)]
+        radius_cells = max(
+            0, math.ceil(
+                self.preparking_candidate_radius / msg.info.resolution))
+        for mx in range(approach_cell[0] - radius_cells,
+                        approach_cell[0] + radius_cells + 1):
+            for my in range(approach_cell[1] - radius_cells,
+                            approach_cell[1] + radius_cells + 1):
                 world = self._map_to_world(msg, mx, my)
                 if world is None:
                     continue
-                distance = math.hypot(world[0] - target.x, world[1] - target.y)
-                if 1e-6 < distance <= self.goal_radius:
+                distance = math.hypot(
+                    world[0] - approach.x, world[1] - approach.y)
+                if 1e-6 < distance <= self.preparking_candidate_radius:
                     candidates.append((distance, (mx, my), world[0], world[1]))
 
         candidates.sort(key=lambda item: item[0])
@@ -392,8 +906,6 @@ class RoadmapExploreMission(Node):
                     not self._known_free_line(msg, cell, target_cell)):
                 continue
             yaw = math.atan2(target.y - world_y, target.x - world_x)
-            if cell == target_cell:
-                yaw = math.atan2(target.y - robot[1], target.x - robot[0])
             return self._make_pose(world_x, world_y, yaw)
         return None
 
@@ -521,11 +1033,15 @@ class RoadmapExploreMission(Node):
     def _abort_mission(self, reason: str):
         if self.state in ('COMPLETE', 'FAILED'):
             return
-        if self.explore_goal_handle is not None and self.state == 'EXPLORING':
+        previous_state = self.state
+        self.state = 'FAILED'
+        if (self.explore_goal_handle is not None and
+                previous_state in ('EXPLORING', 'CANCELING_EXPLORATION')):
             self.explore_goal_handle.cancel_goal_async()
         if self.final_goal_handle is not None:
             self.final_goal_handle.cancel_goal_async()
-        self.state = 'FAILED'
+        if previous_state in ('ACTIVATING_PARKING', 'VISUAL_PARKING'):
+            self._set_parking_enabled(False)
         self.get_logger().error(f'Goal-directed Roadmap mission failed: {reason}')
 
     def _log_waiting(self, message: str):
@@ -546,6 +1062,11 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        # A clean Ctrl-C must release the high-priority /cmd_vel_dock input
+        # before this coordinator disappears.
+        future = node._set_parking_enabled(False)
+        if future is not None:
+            rclpy.spin_until_future_complete(node, future, timeout_sec=1.0)
         node.destroy_node()
         rclpy.shutdown()
 

@@ -22,16 +22,21 @@ Nav2 /cmd_vel ───────────────┐             /cmd_
                           twist_mux ◀───────────┘
                              │
                        /cmd_vel_raw
-                             │
-                     collision_monitor
-                             │
-                       /cmd_vel_safe
-                             │
-                          car_base
+                         ┌────┴─────────────┐
+                         │                  │（可选）
+                         ▼                  ▼
+                      car_base      collision_monitor
+                                            │
+                                      /cmd_vel_safe
+                                            │
+                                         car_base
 ```
 
 `/cmd_vel_dock` 的优先级高于 Nav2。`board_parker` 因此默认不激活且
 不发布任何速度，只有显式调用服务后才接管控制权。
+
+当前融合测试启用 `twist_mux`、关闭 `collision_monitor`，底盘直接订阅
+`/cmd_vel_raw`。
 
 ## 依赖与编译
 

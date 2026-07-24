@@ -79,7 +79,8 @@ public:
     }
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
 
-    // 订阅话题可配:默认 cmd_vel(直连遥控/Nav2);启用安全链时设为 cmd_vel_safe
+    // 订阅话题可配:默认cmd_vel；仅仲裁时为cmd_vel_raw；
+    // 仲裁+碰撞监控时为cmd_vel_safe。
     cmd_sub_ = create_subscription<geometry_msgs::msg::Twist>(
       cmd_vel_topic_, 10,
       std::bind(&CarBaseNode::on_cmd_vel, this, std::placeholders::_1));

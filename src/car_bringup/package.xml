@@ -10,6 +10,7 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <exec_depend>car_base</exec_depend>
+  <exec_depend>car_navigation</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <!-- 雷达包 ldlidar 位于独立的 SDK 工作空间(~/sdk_.../ros2_app),

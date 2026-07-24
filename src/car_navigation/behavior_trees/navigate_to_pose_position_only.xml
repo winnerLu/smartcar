@@ -1,0 +1,41 @@
+<!--
+  Roadmap-to-visual-parking position-only navigation.
+
+  This tree keeps the normal GridBased planner, FollowPath controller, and
+  bounded recovery sequence, but explicitly selects position_goal_checker.
+  That checker has a 5 cm XY tolerance and an unconstrained yaw tolerance, so
+  pre-parking and small Tag-search waypoints never rotate merely to satisfy a
+  requested final orientation.
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="4" name="NavigateRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <RateController hz="1.0">
+          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"
+              server_timeout="2000"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Context"
+              service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+        <FollowPath path="{path}" controller_id="FollowPath"
+          goal_checker_id="position_goal_checker" server_timeout="2000"/>
+      </PipelineSequence>
+      <ReactiveFallback name="RecoveryFallback">
+        <GoalUpdated/>
+        <RoundRobin name="RecoveryActions">
+          <Sequence name="ClearingActions">
+            <ClearEntireCostmap name="ClearLocalCostmap-Subtree"
+              service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Subtree"
+              service_name="global_costmap/clear_entirely_global_costmap"/>
+          </Sequence>
+          <BackUp name="ShortBackUp" backup_dist="0.10" backup_speed="0.05"/>
+          <Spin name="SpinLeft60" spin_dist="1.0472"/>
+          <Spin name="SpinAcrossToRight60" spin_dist="-2.0944"/>
+        </RoundRobin>
+      </ReactiveFallback>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

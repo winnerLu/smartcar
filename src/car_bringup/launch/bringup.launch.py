@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""smartcar 一键启动:底盘 car_base + 激光雷达 ldlidar + 雷达外参 TF。
+"""
+Launch the smart-car base, lidar, and optional velocity chain.
 
 前置(香橙派):需同时 source 两个工作空间,launch 才能找到 ldlidar 包:
     source ~/robot_ws/install/setup.bash
@@ -11,6 +12,9 @@
     ros2 launch car_bringup bringup.launch.py use_lidar:=false
     # rviz 实测微调雷达朝向(改 yaw,单位弧度):
     ros2 launch car_bringup bringup.launch.py laser_yaw:=-0.785
+    # 视觉泊车融合:启用速度仲裁,暂时关闭碰撞监控:
+    ros2 launch car_bringup bringup.launch.py \
+      use_velocity_mux:=true use_collision_monitor:=false
     # 临时关闭相机立柱盲区裁剪:
     ros2 launch car_bringup bringup.launch.py lidar_crop_enabled:=false
 
@@ -55,15 +59,34 @@ def generate_launch_description():
     laser_z = LaunchConfiguration('laser_z')
     laser_yaw = LaunchConfiguration('laser_yaw')
     use_safety = LaunchConfiguration('use_safety')
-    # car_base 订阅话题:use_safety=true 时自动用 cmd_vel_safe,否则 cmd_vel
+    use_velocity_mux = LaunchConfiguration('use_velocity_mux')
+    use_collision_monitor = LaunchConfiguration('use_collision_monitor')
+    # 三种数据流:
+    # 直连:cmd_vel；仅仲裁:cmd_vel_raw；仲裁+碰撞监控:cmd_vel_safe。
     cmd_vel_topic = PythonExpression(
-        ["'cmd_vel_safe' if '", use_safety, "' == 'true' else 'cmd_vel'"])
+        [
+            "'cmd_vel_safe' if '", use_collision_monitor,
+            "' == 'true' else ('cmd_vel_raw' if '", use_velocity_mux,
+            "' == 'true' else 'cmd_vel')",
+        ])
+    launch_velocity_chain = PythonExpression([
+        "'", use_velocity_mux, "' == 'true' or '",
+        use_collision_monitor, "' == 'true'",
+    ])
 
     declare_use_lidar = DeclareLaunchArgument(
         'use_lidar', default_value='true', description='是否启动激光雷达')
     declare_use_safety = DeclareLaunchArgument(
         'use_safety', default_value='false',
-        description='启用安全链(twist_mux+collision_monitor);启用时 car_base 自动订阅 cmd_vel_safe')
+        description='兼容旧参数；true等价于同时开启速度仲裁和碰撞监控')
+    declare_use_velocity_mux = DeclareLaunchArgument(
+        'use_velocity_mux',
+        default_value=use_safety,
+        description='启用twist_mux速度仲裁；视觉泊车融合时必须为true')
+    declare_use_collision_monitor = DeclareLaunchArgument(
+        'use_collision_monitor',
+        default_value=use_safety,
+        description='启用Collision Monitor；暂时关闭时底盘订阅cmd_vel_raw')
     declare_base_port = DeclareLaunchArgument(
         'base_port', default_value='/dev/car_base',
         description='底盘串口设备(udev 固定软链接)')
@@ -95,7 +118,7 @@ def generate_launch_description():
     declare_laser_yaw = DeclareLaunchArgument('laser_yaw', default_value='4.10')
 
     # ---- 底盘节点 ----
-    # 安全链开启时订阅 cmd_vel_safe,否则 cmd_vel(用 cmd_vel_topic 参数,默认随场景)
+    # cmd_vel_topic根据两个独立开关自动选择，无需修改底盘配置文件。
     car_base_node = Node(
         package='car_base',
         executable='car_base_node',
@@ -104,9 +127,9 @@ def generate_launch_description():
         parameters=[params_file, {'port': base_port, 'cmd_vel_topic': cmd_vel_topic}],
     )
 
-    # ---- 安全链(twist_mux + collision_monitor),use_safety:=true 时启动 ----
+    # ---- 速度仲裁链；碰撞监控由子launch中的独立开关控制 ----
     safety_group = GroupAction(
-        condition=IfCondition(use_safety),
+        condition=IfCondition(launch_velocity_chain),
         actions=[
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource([
@@ -114,6 +137,9 @@ def generate_launch_description():
                         FindPackageShare('car_navigation'), 'launch', 'safety.launch.py',
                     ]),
                 ]),
+                launch_arguments={
+                    'use_collision_monitor': use_collision_monitor,
+                }.items(),
             ),
         ],
     )
@@ -166,6 +192,8 @@ def generate_launch_description():
     return LaunchDescription([
         declare_use_lidar,
         declare_use_safety,
+        declare_use_velocity_mux,
+        declare_use_collision_monitor,
         declare_base_port,
         declare_params,
         declare_lidar_port,
