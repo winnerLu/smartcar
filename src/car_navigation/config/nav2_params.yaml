@@ -95,12 +95,15 @@ controller_server:
       trans_stopped_velocity: 0.02
       # 速度限制(差速:x 前进 + z 转向,y 恒 0)
       min_vel_x: 0.0             # 无后向传感器,禁止倒车
-      max_vel_x: 0.28           # 探索提速测试：原0.22m/s
+      # 小障碍实车复测：降低前进速度，为10Hz激光和局部代价地图留出
+      # 更多观测/制动时间。确认12cm x 7cm障碍可稳定避让后再逐级提速。
+      max_vel_x: 0.20
       min_vel_y: 0.0
       max_vel_y: 0.0
-      max_vel_theta: 1.2        # 原1.0rad/s；继续保证雷达10Hz下有足够扫描重叠
+      # 转弯时小障碍更容易在相邻扫描间丢失，先限制到约46deg/s。
+      max_vel_theta: 0.8
       min_speed_xy: 0.0
-      max_speed_xy: 0.28
+      max_speed_xy: 0.20
       min_speed_theta: 0.0
       # 加速度限制
       acc_lim_x: 1.0
@@ -120,7 +123,8 @@ controller_server:
       # 评价插件
       critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign",
                 "PathAlign", "PathDist", "GoalDist"]
-      BaseObstacle.scale: 0.02
+      # 提高对膨胀代价的权重，减少为了贴合全局路径而擦近障碍。
+      BaseObstacle.scale: 0.05
       PathAlign.scale: 32.0
       PathAlign.forward_point_distance: 0.1
       GoalAlign.scale: 24.0
@@ -160,6 +164,8 @@ global_costmap:
           clearing: true
           marking: true
           data_type: "LaserScan"
+          # 小物体只有少量激光命中时，短暂保留观测，避免一帧漏检就被清除。
+          observation_persistence: 0.5
           raytrace_max_range: 12.0
           obstacle_max_range: 10.0
       inflation_layer:
@@ -195,13 +201,15 @@ local_costmap:
           clearing: true
           marking: true
           data_type: "LaserScan"
+          # 局部控制器使用的障碍也短暂保留，避免小物体在相邻帧间闪烁。
+          observation_persistence: 0.5
           raytrace_max_range: 12.0
           obstacle_max_range: 10.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 3.0
-        # 窄通道实车测试：降低软膨胀区，完整 footprint + 3cm padding 仍是硬边界。
-        inflation_radius: 0.15
+        # 在0.15m窄道配置与0.25m保守配置之间折中，为小障碍增加绕行余量。
+        inflation_radius: 0.20
 
 # ==================== 行为树导航器 ====================
 bt_navigator:
