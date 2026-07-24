@@ -7,6 +7,62 @@ from typing import List, Sequence, Tuple
 Point = Tuple[float, float]
 
 
+def append_breadcrumb(
+        history: List[Point], point: Point, min_spacing: float,
+        max_points: int) -> bool:
+    """Append a travelled point when it is far enough from the last sample."""
+    bounded_max = max(2, int(max_points))
+    spacing = max(0.0, float(min_spacing))
+    if history and math.hypot(
+            point[0] - history[-1][0],
+            point[1] - history[-1][1]) + 1e-9 < spacing:
+        return False
+    history.append((float(point[0]), float(point[1])))
+    if len(history) > bounded_max:
+        del history[:len(history) - bounded_max]
+    return True
+
+
+def breadcrumb_backtrack_points(
+        history: Sequence[Point], current: Point,
+        min_distance: float, max_distance: float,
+        candidate_spacing: float) -> List[Point]:
+    """
+    Select previously travelled points for dead-end recovery.
+
+    Distance is measured along the recorded trajectory rather than directly
+    toward the mission target. Candidates are returned farthest first so the
+    first attempt is likely to clear a pocket instead of stopping inside it.
+    """
+    if not history:
+        return []
+
+    minimum = max(0.0, float(min_distance))
+    maximum = max(minimum, float(max_distance))
+    spacing = max(0.01, float(candidate_spacing))
+    walked = 0.0
+    previous = (float(current[0]), float(current[1]))
+    selected: List[Tuple[float, Point]] = []
+    last_selected_distance = -math.inf
+
+    for point in reversed(history):
+        candidate = (float(point[0]), float(point[1]))
+        walked += math.hypot(
+            candidate[0] - previous[0], candidate[1] - previous[1])
+        previous = candidate
+        if walked + 1e-9 < minimum:
+            continue
+        if walked > maximum + 1e-9:
+            break
+        if walked - last_selected_distance + 1e-9 < spacing:
+            continue
+        selected.append((walked, candidate))
+        last_selected_distance = walked
+
+    selected.sort(key=lambda item: item[0], reverse=True)
+    return [point for _, point in selected]
+
+
 def preparking_point(
         start: Point, target: Point,
         standoff: float) -> Tuple[float, float, float]:

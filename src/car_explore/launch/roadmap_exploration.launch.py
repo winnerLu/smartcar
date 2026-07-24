@@ -42,6 +42,12 @@ def generate_launch_description():
         'progressive_probe_enabled')
     exploration_stall_timeout = LaunchConfiguration(
         'exploration_stall_timeout')
+    deadend_backtrack_enabled = LaunchConfiguration(
+        'deadend_backtrack_enabled')
+    deadend_backtrack_min_distance = LaunchConfiguration(
+        'deadend_backtrack_min_distance')
+    deadend_backtrack_max_distance = LaunchConfiguration(
+        'deadend_backtrack_max_distance')
     progressive_probe_step = LaunchConfiguration(
         'progressive_probe_step')
     progressive_probe_min_step = LaunchConfiguration(
@@ -106,8 +112,17 @@ def generate_launch_description():
             'progressive_probe_enabled', default_value='true',
             description='Roadmap停滞时启用目标方向渐进探测'),
         DeclareLaunchArgument(
-            'exploration_stall_timeout', default_value='8.0',
+            'exploration_stall_timeout', default_value='12.0',
             description='探索阶段无位置进展多久后触发渐进探测(s)'),
+        DeclareLaunchArgument(
+            'deadend_backtrack_enabled', default_value='true',
+            description='停滞时优先沿已走安全轨迹退出死胡同'),
+        DeclareLaunchArgument(
+            'deadend_backtrack_min_distance', default_value='0.60',
+            description='死胡同轨迹回退最短距离(m)'),
+        DeclareLaunchArgument(
+            'deadend_backtrack_max_distance', default_value='1.20',
+            description='死胡同轨迹回退最远距离(m)'),
         DeclareLaunchArgument(
             'progressive_probe_step', default_value='0.35',
             description='目标方向渐进探测的最大步长(m)'),
@@ -204,6 +219,12 @@ def generate_launch_description():
                         progressive_probe_enabled, value_type=bool),
                     'exploration_stall_timeout': ParameterValue(
                         exploration_stall_timeout, value_type=float),
+                    'deadend_backtrack_enabled': ParameterValue(
+                        deadend_backtrack_enabled, value_type=bool),
+                    'deadend_backtrack_min_distance': ParameterValue(
+                        deadend_backtrack_min_distance, value_type=float),
+                    'deadend_backtrack_max_distance': ParameterValue(
+                        deadend_backtrack_max_distance, value_type=float),
                     'progressive_probe_step': ParameterValue(
                         progressive_probe_step, value_type=float),
                     'progressive_probe_min_step': ParameterValue(

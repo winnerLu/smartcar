@@ -164,12 +164,22 @@ roadmap_explore_mission:
     # 只有目标位于已知安全自由区，且Nav2路径至少85%已知，才停止Roadmap探索。
     direct_path_known_ratio: 0.85
     direct_check_period: 1.0
-    # Roadmap长时间没有位置进展时，取消其高频无Frontier循环，用Nav2执行
-    # 一次朝预泊车点的短距离已知区域探测，再继续原Roadmap会话。
+    # Roadmap长时间没有位置进展时，先沿实际走过的已知安全轨迹退出死胡同；
+    # 历史轨迹不足时才朝预泊车点做短距离已知区域探测。
     progressive_probe_enabled: true
-    # 降速后允许Nav2完成原地转向和窄道绕障，避免已规划路径在8秒时被取消。
+    # 给Nav2足够时间完成原地转向、清图和窄道绕障。
     exploration_stall_timeout: 12.0
     exploration_progress_distance: 0.10
+    deadend_backtrack_enabled: true
+    # 每行驶0.25m记录一个安全面包屑；停滞时沿历史轨迹回退0.6~1.2m，
+    # 最远候选优先，以便一次退出侧边口袋而不是仍停在死胡同内部。
+    breadcrumb_spacing: 0.25
+    breadcrumb_max_points: 160
+    deadend_backtrack_min_distance: 0.60
+    deadend_backtrack_max_distance: 1.20
+    deadend_backtrack_candidate_spacing: 0.25
+    deadend_backtrack_max_recoveries: 8
+    deadend_recovery_cooldown: 6.0
     progressive_probe_step: 0.35
     progressive_probe_min_step: 0.20
     progressive_probe_fan_angles_deg: [0.0, 15.0, -15.0, 30.0, -30.0, 45.0, -45.0]

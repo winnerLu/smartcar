@@ -112,7 +112,12 @@ ros2 launch car_explore roadmap_exploration.launch.py \
 - `search_timeout`：全部视觉搜索最多 25s。
 - `progressive_probe_enabled`：是否启用 Roadmap 停滞后的目标方向渐进探测，
   默认 `true`。
-- `exploration_stall_timeout`：无位置进展多久触发一次渐进探测，默认 8s。
+- `exploration_stall_timeout`：无位置进展多久触发恢复，默认 12s，给 Nav2
+  足够时间完成转向、清图和窄道重规划。
+- `deadend_backtrack_enabled`：停滞后优先沿实际走过的安全轨迹回退，默认
+  `true`。
+- `deadend_backtrack_min_distance` / `deadend_backtrack_max_distance`：
+  回退候选距离范围，默认 0.60m / 1.20m；最远的已知安全候选优先。
 - `progressive_probe_step` / `progressive_probe_min_step`：长、短探测步长，
   默认 0.35m / 0.20m。
 - `progressive_probe_max_attempts`：整次任务最多发送 6 个短程探测目标。
@@ -144,7 +149,8 @@ Roadmap探索 → Nav2预泊车点（只看XY） → 完整Tag稳定确认
 
 Roadmap若停滞：
 
-Roadmap取消 → 已知安全目标扇形短程点 → Nav2短程移动 → 继续原Roadmap会话
+Roadmap取消 → 沿面包屑轨迹回退0.6~1.2m → 继续原Roadmap会话
+            ↘ 无可用历史轨迹时才使用目标扇形短程点
 ```
 
 如果需要对照上游 Roadmap 的完整探索行为：

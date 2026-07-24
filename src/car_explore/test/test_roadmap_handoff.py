@@ -13,6 +13,44 @@ HANDOFF = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(HANDOFF)
 
 
+def test_breadcrumbs_sample_motion_and_bound_history():
+    history = []
+
+    assert HANDOFF.append_breadcrumb(history, (0.0, 0.0), 0.25, 3)
+    assert not HANDOFF.append_breadcrumb(history, (0.10, 0.0), 0.25, 3)
+    assert HANDOFF.append_breadcrumb(history, (0.25, 0.0), 0.25, 3)
+    assert HANDOFF.append_breadcrumb(history, (0.50, 0.0), 0.25, 3)
+    assert HANDOFF.append_breadcrumb(history, (0.75, 0.0), 0.25, 3)
+    assert history == [(0.25, 0.0), (0.50, 0.0), (0.75, 0.0)]
+
+
+def test_backtrack_uses_travelled_route_and_prefers_far_safe_exit():
+    # The final two points enter a side pocket. Recovery must follow history
+    # backwards, even though that temporarily moves away from the final goal.
+    history = [
+        (0.0, 0.0), (0.3, 0.0), (0.6, 0.0),
+        (0.6, 0.3), (0.6, 0.6), (0.6, 0.9),
+    ]
+
+    points = HANDOFF.breadcrumb_backtrack_points(
+        history, current=(0.6, 1.0),
+        min_distance=0.55, max_distance=1.05,
+        candidate_spacing=0.20)
+
+    assert points
+    assert points[0] == (0.6, 0.0)
+    assert points[-1] == (0.6, 0.3)
+
+
+def test_backtrack_does_not_invent_unknown_route_points():
+    points = HANDOFF.breadcrumb_backtrack_points(
+        [(0.0, 0.0), (0.25, 0.0)], current=(0.30, 0.0),
+        min_distance=0.60, max_distance=1.20,
+        candidate_spacing=0.20)
+
+    assert points == []
+
+
 def test_preparking_point_uses_start_to_target_direction():
     x, y, yaw = HANDOFF.preparking_point((1.0, 2.0), (1.0, 5.0), 0.35)
 
@@ -91,7 +129,10 @@ def test_progressive_probe_runtime_wiring_is_conservative():
     assert 'progressive_probe_enabled: true' in params
     assert 'progressive_probe_known_ratio: 1.0' in params
     assert 'progressive_probe_max_attempts: 6' in params
+    assert 'deadend_backtrack_enabled: true' in params
+    assert 'deadend_backtrack_max_distance: 1.20' in params
     assert 'Explore.Goal.CONTINUE_FROM_TERMINATED_SESSION' in mission
+    assert "'backtrack': 'SENDING_BACKTRACK_NAVIGATION'" in mission
     assert 'sample_stride=1' in mission
     assert "'progressive_probe_enabled'" in launch
     assert "'exploration_stall_timeout'" in launch

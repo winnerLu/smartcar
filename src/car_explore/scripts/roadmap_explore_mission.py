@@ -23,7 +23,9 @@ from tf2_ros import Buffer, TransformException, TransformListener
 
 from roadmap_handoff import (
     Point,
+    append_breadcrumb,
     bounded_search_points,
+    breadcrumb_backtrack_points,
     position_reached,
     preparking_point,
     progressive_probe_points,
@@ -116,6 +118,14 @@ class RoadmapExploreMission(Node):
         self.last_wait_log_time = 0.0
         self.exploration_progress_pose: Optional[Point] = None
         self.exploration_progress_time = 0.0
+        self.breadcrumbs: List[Point] = []
+        self.backtrack_candidates: List[Point] = []
+        self.backtrack_index = 0
+        self.backtrack_plan_candidate: Optional[PoseStamped] = None
+        self.backtrack_target: Optional[Point] = None
+        self.backtrack_recoveries = 0
+        self.recovery_cooldown_until = 0.0
+        self.recovery_settle_kind = 'probe'
         self.exploration_request_mode = 'new'
         self.probe_candidates: List[Point] = []
         self.probe_index = 0
@@ -163,8 +173,16 @@ class RoadmapExploreMission(Node):
             'direct_path_known_ratio': 0.85,
             'direct_check_period': 1.0,
             'progressive_probe_enabled': True,
-            'exploration_stall_timeout': 8.0,
+            'exploration_stall_timeout': 12.0,
             'exploration_progress_distance': 0.10,
+            'deadend_backtrack_enabled': True,
+            'breadcrumb_spacing': 0.25,
+            'breadcrumb_max_points': 160,
+            'deadend_backtrack_min_distance': 0.60,
+            'deadend_backtrack_max_distance': 1.20,
+            'deadend_backtrack_candidate_spacing': 0.20,
+            'deadend_backtrack_max_recoveries': 8,
+            'deadend_recovery_cooldown': 6.0,
             'progressive_probe_step': 0.35,
             'progressive_probe_min_step': 0.20,
             'progressive_probe_fan_angles_deg': [
@@ -199,7 +217,15 @@ class RoadmapExploreMission(Node):
                 'search_dwell_time', 'search_timeout', 'parking_timeout',
                 'direct_path_known_ratio', 'direct_check_period',
                 'progressive_probe_enabled', 'exploration_stall_timeout',
-                'exploration_progress_distance', 'progressive_probe_step',
+                'exploration_progress_distance',
+                'deadend_backtrack_enabled', 'breadcrumb_spacing',
+                'breadcrumb_max_points',
+                'deadend_backtrack_min_distance',
+                'deadend_backtrack_max_distance',
+                'deadend_backtrack_candidate_spacing',
+                'deadend_backtrack_max_recoveries',
+                'deadend_recovery_cooldown',
+                'progressive_probe_step',
                 'progressive_probe_min_step',
                 'progressive_probe_fan_angles_deg',
                 'progressive_probe_min_progress',
@@ -257,6 +283,25 @@ class RoadmapExploreMission(Node):
             1.0, float(self.exploration_stall_timeout))
         self.exploration_progress_distance = max(
             0.02, float(self.exploration_progress_distance))
+        self.deadend_backtrack_enabled = bool(
+            self.deadend_backtrack_enabled)
+        self.breadcrumb_spacing = max(
+            0.05, float(self.breadcrumb_spacing))
+        self.breadcrumb_max_points = max(
+            10, int(self.breadcrumb_max_points))
+        self.deadend_backtrack_min_distance = max(
+            self.breadcrumb_spacing,
+            float(self.deadend_backtrack_min_distance))
+        self.deadend_backtrack_max_distance = max(
+            self.deadend_backtrack_min_distance,
+            float(self.deadend_backtrack_max_distance))
+        self.deadend_backtrack_candidate_spacing = max(
+            self.breadcrumb_spacing,
+            float(self.deadend_backtrack_candidate_spacing))
+        self.deadend_backtrack_max_recoveries = max(
+            1, int(self.deadend_backtrack_max_recoveries))
+        self.deadend_recovery_cooldown = max(
+            0.0, float(self.deadend_recovery_cooldown))
         self.progressive_probe_step = max(
             0.05, float(self.progressive_probe_step))
         self.progressive_probe_min_step = min(
@@ -331,8 +376,9 @@ class RoadmapExploreMission(Node):
 
         if self.state in (
                 'FINAL_NAVIGATION', 'SEARCH_NAVIGATION',
-                'PROBE_NAVIGATION'):
-            if (self.state != 'PROBE_NAVIGATION' and
+                'PROBE_NAVIGATION', 'BACKTRACK_NAVIGATION'):
+            if (self.state not in (
+                    'PROBE_NAVIGATION', 'BACKTRACK_NAVIGATION') and
                     self.visual_parking_enabled and
                     self._tag_confirmed(now) and
                     self._inside_tag_handoff_region()):
@@ -421,6 +467,10 @@ class RoadmapExploreMission(Node):
             (x, y), (goal_x, goal_y), self.preparking_distance)
         self.preparking_pose = self._make_pose(
             approach_x, approach_y, approach_yaw)
+        self.breadcrumbs = []
+        append_breadcrumb(
+            self.breadcrumbs, (x, y),
+            self.breadcrumb_spacing, self.breadcrumb_max_points)
         self.target_pub.publish(self.target_pose)
         self.preparking_pub.publish(self.preparking_pose)
         self.mission_start_time = now
@@ -518,8 +568,8 @@ class RoadmapExploreMission(Node):
                 return
             self.get_logger().info(
                 'Roadmap exploration is stopped; selecting a known-safe '
-                'target-directed probe')
-            self._prepare_progressive_probe()
+                'trajectory recovery')
+            self._prepare_stall_recovery()
             return
 
         if self.state in ('FINAL_NAVIGATION', 'COMPLETE', 'FAILED'):
@@ -637,6 +687,9 @@ class RoadmapExploreMission(Node):
         if robot is None:
             return
         current = (robot[0], robot[1])
+        append_breadcrumb(
+            self.breadcrumbs, current,
+            self.breadcrumb_spacing, self.breadcrumb_max_points)
         if self.exploration_progress_pose is None:
             self.exploration_progress_pose = current
             self.exploration_progress_time = now
@@ -650,6 +703,7 @@ class RoadmapExploreMission(Node):
 
     def _exploration_stalled(self, now: float) -> bool:
         return (
+            now >= self.recovery_cooldown_until and
             self.exploration_progress_time > 0.0 and
             now - self.exploration_progress_time >=
             self.exploration_stall_timeout)
@@ -659,18 +713,145 @@ class RoadmapExploreMission(Node):
             self._abort_mission(
                 'Cannot start progressive probing: Roadmap goal handle is missing')
             return
-        if self.probe_attempts >= self.progressive_probe_max_attempts:
-            self._abort_mission(
-                'Progressive probe attempt limit reached without a safe '
-                'target path')
-            return
         self.state = 'CANCELING_EXPLORATION_FOR_PROBE'
         future = self.explore_goal_handle.cancel_goal_async()
         future.add_done_callback(self._explore_cancel_done)
         self.get_logger().warning(
             'Roadmap exploration made no positional progress for '
-            f'{self.exploration_stall_timeout:.1f}s; canceling it to select '
-            'a short target-directed probe')
+            f'{self.exploration_stall_timeout:.1f}s; canceling it for '
+            'breadcrumb backtracking or a short target-directed probe')
+
+    def _prepare_stall_recovery(self):
+        robot = self._robot_pose()
+        if robot is None:
+            self._abort_mission(
+                'Cannot recover from exploration stall without robot pose')
+            return
+
+        if (self.deadend_backtrack_enabled and
+                self.backtrack_recoveries <
+                self.deadend_backtrack_max_recoveries):
+            generated = breadcrumb_backtrack_points(
+                self.breadcrumbs, (robot[0], robot[1]),
+                self.deadend_backtrack_min_distance,
+                self.deadend_backtrack_max_distance,
+                self.deadend_backtrack_candidate_spacing)
+            self.backtrack_candidates = [
+                point for point in generated
+                if self._safe_search_point(point)]
+            self.backtrack_index = 0
+            self.backtrack_plan_candidate = None
+            self.get_logger().info(
+                f'Breadcrumb recovery found {len(generated)} travelled '
+                f'candidates; {len(self.backtrack_candidates)} remain '
+                'known-free with endpoint clearance')
+            if self.backtrack_candidates:
+                self._send_next_backtrack_candidate()
+                return
+        elif self.deadend_backtrack_enabled:
+            self.get_logger().warning(
+                'Breadcrumb recovery limit reached; using bounded '
+                'target-directed probing as fallback')
+
+        self.get_logger().warning(
+            'No usable breadcrumb exit is available; falling back to a '
+            'short known-safe target-directed probe')
+        self._prepare_progressive_probe()
+
+    def _send_next_backtrack_candidate(self):
+        while self.backtrack_index < len(self.backtrack_candidates):
+            index = self.backtrack_index
+            point = self.backtrack_candidates[index]
+            self.backtrack_index += 1
+            robot = self._robot_pose()
+            yaw = robot[2] if robot is not None else 0.0
+            candidate = self._make_pose(point[0], point[1], yaw)
+            self.get_logger().info(
+                f'Checking breadcrumb recovery candidate {index + 1}/'
+                f'{len(self.backtrack_candidates)}: '
+                f'({point[0]:.2f}, {point[1]:.2f})')
+            self._request_backtrack_plan(candidate)
+            return
+
+        self.get_logger().warning(
+            'No breadcrumb candidate has a fully known Nav2 path; '
+            'trying target-directed probing')
+        self._prepare_progressive_probe()
+
+    def _request_backtrack_plan(self, candidate: PoseStamped):
+        self.plan_in_progress = True
+        self.backtrack_plan_candidate = candidate
+        self.state = 'PLANNING_BACKTRACK'
+        goal = ComputePathToPose.Goal()
+        goal.goal = candidate
+        goal.planner_id = str(self.planner_id)
+        goal.use_start = False
+        future = self.plan_client.send_goal_async(goal)
+        future.add_done_callback(self._backtrack_plan_goal_response)
+
+    def _backtrack_plan_goal_response(self, future):
+        try:
+            goal_handle = future.result()
+        except Exception as exc:
+            self.plan_in_progress = False
+            self.get_logger().warning(
+                f'Breadcrumb recovery planning request failed: {exc}')
+            self._send_next_backtrack_candidate()
+            return
+        if self.state != 'PLANNING_BACKTRACK':
+            if goal_handle.accepted:
+                goal_handle.cancel_goal_async()
+            self.plan_in_progress = False
+            return
+        if not goal_handle.accepted:
+            self.plan_in_progress = False
+            self.get_logger().warning(
+                'Nav2 rejected one breadcrumb recovery plan request')
+            self._send_next_backtrack_candidate()
+            return
+        goal_handle.get_result_async().add_done_callback(
+            self._backtrack_plan_result)
+
+    def _backtrack_plan_result(self, future):
+        self.plan_in_progress = False
+        if self.state != 'PLANNING_BACKTRACK':
+            return
+        try:
+            wrapped = future.result()
+        except Exception as exc:
+            self.get_logger().warning(
+                f'Breadcrumb recovery planning result failed: {exc}')
+            self._send_next_backtrack_candidate()
+            return
+        if (wrapped.status != GoalStatus.STATUS_SUCCEEDED or
+                not wrapped.result.path.poses):
+            self.get_logger().warning(
+                'Breadcrumb recovery candidate has no Nav2 path')
+            self._send_next_backtrack_candidate()
+            return
+        known_ratio = self._known_path_ratio(
+            wrapped.result.path, sample_stride=1)
+        if known_ratio + 1e-9 < self.progressive_probe_known_ratio:
+            self.get_logger().warning(
+                f'Breadcrumb recovery path is only '
+                f'{known_ratio * 100.0:.0f}% known; trying an older point')
+            self._send_next_backtrack_candidate()
+            return
+        candidate = self.backtrack_plan_candidate
+        if candidate is None:
+            self._abort_mission(
+                'Breadcrumb recovery candidate pose is missing')
+            return
+        self.backtrack_target = (
+            candidate.pose.position.x, candidate.pose.position.y)
+        self.get_logger().warning(
+            f'Dispatching breadcrumb recovery '
+            f'{self.backtrack_recoveries + 1}/'
+            f'{self.deadend_backtrack_max_recoveries}: '
+            f'({self.backtrack_target[0]:.2f}, '
+            f'{self.backtrack_target[1]:.2f}), '
+            f'path_known={known_ratio * 100.0:.0f}%')
+        self._send_nav_goal(candidate, 'backtrack')
 
     def _prepare_progressive_probe(self):
         robot = self._robot_pose()
@@ -702,9 +883,11 @@ class RoadmapExploreMission(Node):
 
     def _send_next_probe_candidate(self):
         if self.probe_attempts >= self.progressive_probe_max_attempts:
-            self._abort_mission(
-                'Progressive probe attempt limit reached without a safe '
-                'target path')
+            self.get_logger().warning(
+                'Progressive probe attempt limit reached; preserving the '
+                'mission and returning control to Roadmap')
+            self.probe_attempts = 0
+            self._settle_recovery('probe_limit')
             return
         while self.probe_index < len(self.probe_candidates):
             index = self.probe_index
@@ -798,15 +981,17 @@ class RoadmapExploreMission(Node):
     def _handle_probe_selection_exhausted(self):
         self.probe_failures += 1
         if self.probe_failures >= self.progressive_probe_max_failures:
-            self._abort_mission(
+            self.get_logger().warning(
                 'No known-safe target-directed probe remains after '
-                f'{self.probe_failures} selection cycles')
+                f'{self.probe_failures} selection cycles; this may be a '
+                'required topological detour, so Roadmap will continue')
+            self.probe_failures = 0
+            self._settle_recovery('probe_exhausted')
             return
         self.get_logger().warning(
             'No progressive probe candidate is currently safe and reachable; '
             'resuming Roadmap once before trying again')
-        self.probe_settle_start_time = self._now_seconds()
-        self.state = 'PROBE_SETTLE'
+        self._settle_recovery('probe_unavailable')
 
     def _complete_progressive_probe(self):
         robot = self._robot_pose()
@@ -824,23 +1009,69 @@ class RoadmapExploreMission(Node):
                 f'{progress:.2f}m; failure '
                 f'{self.probe_failures}/{self.progressive_probe_max_failures}')
             if self.probe_failures >= self.progressive_probe_max_failures:
-                self._abort_mission(
+                self.get_logger().warning(
                     'Progressive probing repeatedly failed to reduce target '
-                    'distance')
+                    'distance; Roadmap will continue because a valid detour '
+                    'may temporarily move away from the target')
+                self.probe_failures = 0
+                self.probe_attempts = 0
+                robot_point = (robot[0], robot[1])
+                append_breadcrumb(
+                    self.breadcrumbs, robot_point,
+                    self.breadcrumb_spacing, self.breadcrumb_max_points)
+                self._settle_recovery('probe_no_progress')
                 return
         else:
             self.probe_failures = 0
+            self.probe_attempts = 0
+            append_breadcrumb(
+                self.breadcrumbs, (robot[0], robot[1]),
+                self.breadcrumb_spacing, self.breadcrumb_max_points)
             self.get_logger().info(
                 f'Progressive probe advanced {progress:.2f}m toward the '
                 f'pre-parking point; remaining distance={remaining:.2f}m')
+        self._settle_recovery('probe')
+
+    def _resume_roadmap_after_probe(self):
+        self.recovery_cooldown_until = (
+            self._now_seconds() + self.deadend_recovery_cooldown)
+        self.get_logger().info(
+            f'{self.recovery_settle_kind} recovery settled; continuing the '
+            'existing Roadmap session with the updated SLAM map and '
+            f'{self.deadend_recovery_cooldown:.1f}s recovery cooldown')
+        self._send_exploration_goal(new_session=False)
+
+    def _settle_recovery(self, kind: str):
+        self.recovery_settle_kind = kind
         self.probe_settle_start_time = self._now_seconds()
         self.state = 'PROBE_SETTLE'
 
-    def _resume_roadmap_after_probe(self):
+    def _complete_backtrack(self):
+        robot = self._robot_pose()
+        if robot is None or self.backtrack_target is None:
+            self._abort_mission(
+                'Cannot finish breadcrumb recovery without robot and target')
+            return
+
+        if self.breadcrumbs:
+            nearest_index = min(
+                range(len(self.breadcrumbs)),
+                key=lambda index: math.hypot(
+                    self.breadcrumbs[index][0] - self.backtrack_target[0],
+                    self.breadcrumbs[index][1] - self.backtrack_target[1]))
+            self.breadcrumbs = self.breadcrumbs[:nearest_index + 1]
+        append_breadcrumb(
+            self.breadcrumbs, (robot[0], robot[1]),
+            self.breadcrumb_spacing, self.breadcrumb_max_points)
+        self.backtrack_recoveries += 1
+        self.probe_failures = 0
+        self.probe_attempts = 0
         self.get_logger().info(
-            'Progressive probe settled; continuing the existing Roadmap '
-            'session with the updated SLAM map')
-        self._send_exploration_goal(new_session=False)
+            f'Breadcrumb recovery reached ({robot[0]:.2f}, '
+            f'{robot[1]:.2f}); trimmed the dead-end tail and will resume '
+            'Roadmap so it can choose another reachable frontier')
+        self.backtrack_target = None
+        self._settle_recovery('breadcrumb')
 
     def _send_final_goal(self):
         if self.final_candidate is None:
@@ -857,6 +1088,7 @@ class RoadmapExploreMission(Node):
             'approach': 'SENDING_FINAL_NAVIGATION',
             'search': 'SENDING_SEARCH_NAVIGATION',
             'probe': 'SENDING_PROBE_NAVIGATION',
+            'backtrack': 'SENDING_BACKTRACK_NAVIGATION',
         }
         if purpose not in sending_states:
             self._abort_mission(f'Unknown Nav2 mission purpose: {purpose}')
@@ -907,6 +1139,15 @@ class RoadmapExploreMission(Node):
                 self.active_nav_target = None
                 self.active_nav_purpose = None
                 self._send_next_probe_candidate()
+            elif self.active_nav_purpose == 'backtrack':
+                self.get_logger().warning(
+                    'Nav2 rejected one breadcrumb recovery goal; trying an '
+                    'older known-safe point')
+                self.final_goal_handle = None
+                self.active_nav_target = None
+                self.active_nav_purpose = None
+                self.backtrack_target = None
+                self._send_next_backtrack_candidate()
             else:
                 self._abort_mission('Nav2 rejected the pre-parking goal')
             return
@@ -919,6 +1160,7 @@ class RoadmapExploreMission(Node):
             'approach': 'FINAL_NAVIGATION',
             'search': 'SEARCH_NAVIGATION',
             'probe': 'PROBE_NAVIGATION',
+            'backtrack': 'BACKTRACK_NAVIGATION',
         }
         self.state = active_states[purpose]
         self.get_logger().info(
@@ -1006,6 +1248,18 @@ class RoadmapExploreMission(Node):
                     f'Progressive probe Nav2 goal failed with status {status}; '
                     'trying another known-safe candidate')
                 self._send_next_probe_candidate()
+            return
+
+        if purpose == 'backtrack':
+            if (status == GoalStatus.STATUS_SUCCEEDED or
+                    cancel_reason == 'position_reached'):
+                self._complete_backtrack()
+            else:
+                self.get_logger().warning(
+                    f'Breadcrumb recovery Nav2 goal failed with status '
+                    f'{status}; trying another older known-safe point')
+                self.backtrack_target = None
+                self._send_next_backtrack_candidate()
             return
 
         self._abort_mission('Received a Nav2 result with no mission purpose')
