@@ -50,6 +50,13 @@ def test_position_arrival_has_no_heading_requirement():
     assert not HANDOFF.position_reached((1.11, 2.0), (1.0, 2.0), 0.10)
 
 
+def test_position_arrival_uses_euclidean_not_per_axis_distance():
+    # Both axis errors are below 0.15 m, while hypot(0.11, 0.11) is 0.156 m.
+    # A rectangular/per-axis test would incorrectly accept this pose.
+    assert not HANDOFF.position_reached((0.11, 0.11), (0.0, 0.0), 0.15)
+    assert HANDOFF.position_reached((0.10, 0.10), (0.0, 0.0), 0.15)
+
+
 def test_tag_handoff_requires_one_fresh_complete_quality_pose():
     valid = dict(
         visible_count=1,
