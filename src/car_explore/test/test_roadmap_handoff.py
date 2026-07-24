@@ -138,6 +138,23 @@ def test_progressive_probe_runtime_wiring_is_conservative():
     assert "'exploration_stall_timeout'" in launch
 
 
+def test_initial_known_path_skips_roadmap_before_nav2_handoff():
+    mission = (
+        Path(__file__).parents[1]
+        / 'scripts'
+        / 'roadmap_explore_mission.py'
+    ).read_text()
+
+    start_block = mission.split(
+        '    def _check_initial_direct_path', 1)[0].rsplit(
+        '    def _try_start', 1)[1]
+    assert 'self._check_initial_direct_path()' in start_block
+    assert 'self._send_exploration_goal(new_session=True)' in start_block
+    assert "'CHECKING_INITIAL_PATH'" in mission
+    assert 'skipping Roadmap' in mission
+    assert 'self._send_final_goal()' in mission
+
+
 def test_position_arrival_has_no_heading_requirement():
     # The helper has no yaw argument by design: a car facing any direction at
     # this XY position is considered ready for Tag acquisition.

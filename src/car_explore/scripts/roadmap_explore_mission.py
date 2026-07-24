@@ -89,6 +89,7 @@ class RoadmapExploreMission(Node):
         self.final_candidate: Optional[PoseStamped] = None
         self.active_nav_target: Optional[PoseStamped] = None
         self.active_nav_purpose: Optional[str] = None
+        self.initial_plan_candidate: Optional[PoseStamped] = None
         self.nav_cancel_reason: Optional[str] = None
         self.nav_sequence = 0
         self.plan_in_progress = False
@@ -474,7 +475,6 @@ class RoadmapExploreMission(Node):
         self.target_pub.publish(self.target_pose)
         self.preparking_pub.publish(self.preparking_pose)
         self.mission_start_time = now
-        self.state = 'SENDING_EXPLORATION'
         self.get_logger().info(
             f'Recorded start pose ({x:.2f}, {y:.2f}, yaw={math.degrees(yaw):.1f}deg); '
             f'Roadmap target=({goal_x:.2f}, {goal_y:.2f}), '
@@ -482,6 +482,96 @@ class RoadmapExploreMission(Node):
             f'relative=({self.goal_forward:.2f}m forward, {self.goal_left:.2f}m left). '
             'Final Nav2 arrival uses XY position only; yaw is not a completion condition.')
 
+        if self.goal_directed_mode:
+            self._check_initial_direct_path()
+        else:
+            self._send_exploration_goal(new_session=True)
+
+    def _check_initial_direct_path(self):
+        """Skip Roadmap when Nav2 already has a safe known pre-parking path."""
+        candidate = self._known_safe_target_pose()
+        if candidate is None:
+            self.get_logger().info(
+                'Initial pre-parking point is not known-safe; starting '
+                'Roadmap exploration')
+            self._send_exploration_goal(new_session=True)
+            return
+
+        self.initial_plan_candidate = candidate
+        self.plan_in_progress = True
+        self.state = 'CHECKING_INITIAL_PATH'
+        goal = ComputePathToPose.Goal()
+        goal.goal = candidate
+        goal.planner_id = str(self.planner_id)
+        goal.use_start = False
+        future = self.plan_client.send_goal_async(goal)
+        future.add_done_callback(self._initial_plan_goal_response)
+        self.get_logger().info(
+            'Checking whether the initial pre-parking path is already '
+            'known and safe before starting Roadmap')
+
+    def _initial_plan_goal_response(self, future):
+        try:
+            goal_handle = future.result()
+        except Exception as exc:
+            self.get_logger().warning(
+                f'Initial ComputePathToPose request failed: {exc}; '
+                'starting Roadmap exploration')
+            self._fallback_to_initial_exploration()
+            return
+        if self.state != 'CHECKING_INITIAL_PATH':
+            if goal_handle.accepted:
+                goal_handle.cancel_goal_async()
+            return
+        if not goal_handle.accepted:
+            self.get_logger().info(
+                'Nav2 rejected the initial direct-path check; starting '
+                'Roadmap exploration')
+            self._fallback_to_initial_exploration()
+            return
+        goal_handle.get_result_async().add_done_callback(
+            self._initial_plan_result)
+
+    def _initial_plan_result(self, future):
+        self.plan_in_progress = False
+        if self.state != 'CHECKING_INITIAL_PATH':
+            return
+        try:
+            wrapped = future.result()
+        except Exception as exc:
+            self.get_logger().warning(
+                f'Initial ComputePathToPose result failed: {exc}; '
+                'starting Roadmap exploration')
+            self._fallback_to_initial_exploration()
+            return
+
+        if (wrapped.status == GoalStatus.STATUS_SUCCEEDED and
+                wrapped.result.path.poses):
+            known_ratio = self._known_path_ratio(wrapped.result.path)
+            if known_ratio >= self.direct_path_known_ratio:
+                self.final_candidate = wrapped.result.path.poses[-1]
+                self.initial_plan_candidate = None
+                self.get_logger().info(
+                    f'Initial pre-parking path is '
+                    f'{known_ratio * 100.0:.0f}% known; skipping Roadmap '
+                    'and starting position-only Nav2 navigation')
+                self._send_final_goal()
+                return
+            self.get_logger().info(
+                f'Initial pre-parking path is only '
+                f'{known_ratio * 100.0:.0f}% known; Roadmap exploration '
+                'is required')
+        else:
+            self.get_logger().info(
+                'No initial Nav2 path to the pre-parking point; Roadmap '
+                'exploration is required')
+        self._fallback_to_initial_exploration()
+
+    def _fallback_to_initial_exploration(self):
+        self.plan_in_progress = False
+        self.initial_plan_candidate = None
+        if self.state in ('FAILED', 'COMPLETE'):
+            return
         self._send_exploration_goal(new_session=True)
 
     def _send_exploration_goal(self, new_session: bool):
