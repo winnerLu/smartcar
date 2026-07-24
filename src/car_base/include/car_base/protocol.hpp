@@ -27,6 +27,7 @@ constexpr uint8_t kFrameHead = 0x7B;
 constexpr uint8_t kFrameTail = 0x7D;
 constexpr size_t kCtrlFrameLen = 11;
 constexpr size_t kFbFrameLen = 24;
+constexpr uint8_t kParkingSuccessReserved1 = 0x01;
 
 // IMU 原始计数 -> 物理量换算(手册 6.2 明确值)
 constexpr double kAccCountPerMs2 = 1672.0;      // ±2G 量程
@@ -82,6 +83,15 @@ inline std::array<uint8_t, kCtrlFrameLen> build_ctrl_frame(
   f[9] = bcc(f.data(), 9);        // 字节 1..9 异或
   f[10] = kFrameTail;
   return f;
+}
+
+// 停车成功通知 STM32:
+//   - 所有速度字段必须为 0,保证发送蜂鸣器指令时底盘保持停止;
+//   - 预留位1置 1,预留位2保持 0。
+inline std::array<uint8_t, kCtrlFrameLen> build_parking_success_frame()
+{
+  return build_ctrl_frame(
+    0.0, 0.0, 1, 1, kParkingSuccessReserved1, 0);
 }
 
 // 解析后的反馈数据(已换算物理单位)

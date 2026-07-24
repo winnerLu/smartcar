@@ -48,6 +48,13 @@ number of consecutive frames. While active and complete, the controller holds
 zero velocity; the coordinator must then call `set_enabled: false` to release
 the mux input.
 
+`car_base` also subscribes to this completion topic. On the first `false` to
+`true` transition, it sends one stopped control frame to the STM32: all three
+velocity fields are zero, reserved byte 1 is `0x01`, and reserved byte 2 is
+zero. This is the parking-success buzzer command. A later `false` message
+re-arms the trigger for the next parking attempt. The integration can be
+disabled with `parking_buzzer_enabled: false` in `car_base.yaml`.
+
 Before any driving test, verify the detector output while moving and rotating
 the board by hand:
 

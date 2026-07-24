@@ -67,6 +67,18 @@ TEST(Protocol, CtrlVxSign) {
   EXPECT_EQ(read_be_i16(&fn[3]), -200);
 }
 
+TEST(Protocol, ParkingSuccessFrameIsStoppedAndSetsReserved1) {
+  auto f = build_parking_success_frame();
+  EXPECT_EQ(f[0], kFrameHead);
+  EXPECT_EQ(f[1], kParkingSuccessReserved1);
+  EXPECT_EQ(f[2], 0x00);
+  EXPECT_EQ(read_be_i16(&f[3]), 0);
+  EXPECT_EQ(read_be_i16(&f[5]), 0);
+  EXPECT_EQ(read_be_i16(&f[7]), 0);
+  EXPECT_EQ(f[9], bcc(f.data(), 9));
+  EXPECT_EQ(f[10], kFrameTail);
+}
+
 TEST(Protocol, ParseFeedbackDocExample) {
   // X 速度 0x0101=257 -> 0.257 m/s;Z 加速度 0x4080=16512 -> /1672=9.8756;
   // 电池 0x5838=22584 mV
@@ -80,7 +92,8 @@ TEST(Protocol, ParseFeedbackDocExample) {
 
 TEST(Protocol, ParseFeedbackNegative) {
   // 0xFE96=-362 -> /1672=-0.2165;0xFFFB=-5 -> /3753=-0.00133
-  auto f = make_fb(0, 0, 0,
+  auto f = make_fb(
+    0, 0, 0,
     static_cast<int16_t>(0xFE96), 0, 0,
     0, 0, static_cast<int16_t>(0xFFFB), 12000);
   auto fb = parse_feedback(f.data(), f.size());

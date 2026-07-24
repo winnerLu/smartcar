@@ -24,6 +24,7 @@
 #include "geometry_msgs/msg/transform_stamped.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "sensor_msgs/msg/imu.hpp"
+#include "std_msgs/msg/bool.hpp"
 #include "std_msgs/msg/float32.hpp"
 #include "tf2/LinearMath/Quaternion.h"
 #include "tf2_ros/transform_broadcaster.h"
@@ -57,6 +58,9 @@ public:
     max_wz_ = declare_parameter<double>("max_wz", 2.0);   // 角速度硬上限
     debug_tx_ = declare_parameter<bool>("debug_tx", false);  // 打印发送帧十六进制
     cmd_vel_topic_ = declare_parameter<std::string>("cmd_vel_topic", "cmd_vel");  // 订阅话题
+    parking_complete_topic_ = declare_parameter<std::string>(
+      "parking_complete_topic", "/board_parker/parking_complete");
+    parking_buzzer_enabled_ = declare_parameter<bool>("parking_buzzer_enabled", true);
     publish_imu_ = declare_parameter<bool>("publish_imu", false);     // IMU 未到货,默认关
     odom_frame_ = declare_parameter<std::string>("odom_frame", "odom");
     base_frame_ = declare_parameter<std::string>("base_frame", "base_link");
@@ -84,6 +88,15 @@ public:
     cmd_sub_ = create_subscription<geometry_msgs::msg::Twist>(
       cmd_vel_topic_, 10,
       std::bind(&CarBaseNode::on_cmd_vel, this, std::placeholders::_1));
+    if (parking_buzzer_enabled_) {
+      auto parking_qos = rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local();
+      parking_complete_sub_ = create_subscription<std_msgs::msg::Bool>(
+        parking_complete_topic_, parking_qos,
+        std::bind(&CarBaseNode::on_parking_complete, this, std::placeholders::_1));
+      RCLCPP_INFO(
+        get_logger(), "停车成功蜂鸣器已启用:监听 %s",
+        parking_complete_topic_.c_str());
+    }
 
     last_cmd_time_ = now();
     last_odom_time_ = now();
@@ -106,9 +119,32 @@ private:
     last_cmd_time_ = now();
   }
 
+  void on_parking_complete(const std_msgs::msg::Bool::SharedPtr msg)
+  {
+    std::lock_guard<std::mutex> lk(cmd_mtx_);
+    if (!msg->data) {
+      // 下一次视觉泊车开始时会发布 false,允许下一次成功再次鸣叫。
+      parking_success_latched_ = false;
+      return;
+    }
+    if (parking_success_latched_) {
+      return;
+    }
+
+    // 成功事件优先停车。特殊串口帧由 20 Hz 发送定时器发送,
+    // 避免与普通速度帧并发写串口。
+    target_vx_ = 0.0;
+    target_wz_ = 0.0;
+    last_cmd_time_ = now();
+    parking_buzzer_pending_ = true;
+    parking_success_latched_ = true;
+    RCLCPP_INFO(get_logger(), "收到停车成功事件,准备发送 STM32 蜂鸣器指令");
+  }
+
   void on_send()
   {
     double vx, wz;
+    bool send_parking_success;
     {
       std::lock_guard<std::mutex> lk(cmd_mtx_);
       // 超时保护:超过 cmd_timeout_ms 未收到新指令则归零
@@ -117,13 +153,16 @@ private:
         target_vx_ = 0.0;
         target_wz_ = 0.0;
       }
-      vx = target_vx_;
-      wz = target_wz_;
+      send_parking_success = parking_buzzer_pending_;
+      vx = send_parking_success ? 0.0 : target_vx_;
+      wz = send_parking_success ? 0.0 : target_wz_;
     }
     // 限幅:兜底防止过大速度(误操作/Nav2 异常)导致 STM32 内部溢出或危险运动
     vx = std::clamp(vx, -max_vx_, max_vx_);
     wz = std::clamp(wz, -max_wz_, max_wz_);
-    auto frame = build_ctrl_frame(vx, wz, cmd_wz_sign_, cmd_vx_sign_);
+    auto frame = send_parking_success ?
+      build_parking_success_frame() :
+      build_ctrl_frame(vx, wz, cmd_wz_sign_, cmd_vx_sign_);
     if (debug_tx_ && (vx != 0.0 || wz != 0.0)) {
       char hex[64];
       int p = 0;
@@ -132,8 +171,19 @@ private:
       }
       RCLCPP_INFO(get_logger(), "TX vx=%.3f wz=%.3f -> %s", vx, wz, hex);
     }
-    if (!serial_.write_all(frame.data(), frame.size())) {
+    const bool write_ok = serial_.write_all(frame.data(), frame.size());
+    if (!write_ok) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "串口写失败");
+      return;
+    }
+    if (send_parking_success) {
+      {
+        std::lock_guard<std::mutex> lk(cmd_mtx_);
+        parking_buzzer_pending_ = false;
+      }
+      RCLCPP_INFO(
+        get_logger(),
+        "已发送停车成功帧: vx=0 vy=0 wz=0 reserved1=1 reserved2=0");
     }
   }
 
@@ -236,11 +286,12 @@ private:
 
   // 参数
   std::string device_, odom_frame_, base_frame_, cmd_vel_topic_;
+  std::string parking_complete_topic_;
   int baud_, cmd_vx_sign_, cmd_wz_sign_, odom_vx_sign_, odom_wz_sign_, cmd_timeout_ms_;
   double max_vx_, max_wz_;
   bool debug_tx_;
   double odom_wz_scale_, odom_vx_scale_, voltage_scale_;
-  bool publish_imu_, publish_tf_;
+  bool publish_imu_, publish_tf_, parking_buzzer_enabled_;
 
   // 串口 + 协议
   SerialPort serial_;
@@ -250,6 +301,8 @@ private:
   std::mutex cmd_mtx_;
   double target_vx_ = 0.0, target_wz_ = 0.0;
   rclcpp::Time last_cmd_time_;
+  bool parking_buzzer_pending_ = false;
+  bool parking_success_latched_ = false;
 
   // 里程计状态
   double x_ = 0.0, y_ = 0.0, theta_ = 0.0;
@@ -257,6 +310,7 @@ private:
 
   // ROS 接口
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmd_sub_;
+  rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr parking_complete_sub_;
   rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr odom_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imu_pub_;
   rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr battery_pub_;

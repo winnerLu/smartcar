@@ -6,6 +6,9 @@ car_base:
     # 启动文件按模式覆盖：直连cmd_vel、仅仲裁cmd_vel_raw、
     # 仲裁+碰撞监控cmd_vel_safe。
     cmd_vel_topic: cmd_vel
+    # 视觉泊车成功后发送一次零速控制帧，预留位1=1，触发 STM32 蜂鸣器。
+    parking_buzzer_enabled: true
+    parking_complete_topic: /board_parker/parking_complete
     # 速度符号:控制帧字节布局修正后(预留位2字节)需重新实测确认,先设 +1
     cmd_vx_sign: 1
     cmd_wz_sign: 1
