@@ -89,6 +89,10 @@ controller_server:
     FollowPath:
       plugin: "dwb_core::DWBLocalPlanner"
       debug_trajectory_details: true
+      # 与精确到预泊车点的 position_goal_checker 保持一致，避免
+      # RotateToGoal 在距目标约 0.15~0.25m 时提前禁止平移。
+      xy_goal_tolerance: 0.05
+      trans_stopped_velocity: 0.02
       # 速度限制(差速:x 前进 + z 转向,y 恒 0)
       min_vel_x: 0.0             # 无后向传感器,禁止倒车
       max_vel_x: 0.28           # 探索提速测试：原0.22m/s

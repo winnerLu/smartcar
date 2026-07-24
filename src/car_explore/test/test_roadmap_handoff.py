@@ -126,3 +126,13 @@ def test_position_goal_checker_keeps_normal_nav_checker_unchanged():
     assert 'position_goal_checker:' in params
     assert 'yaw_goal_tolerance: 6.283185' in params
     assert 'yaw_goal_tolerance: 0.20' in params
+
+
+def test_dwb_rotate_to_goal_tolerance_matches_precise_position_checker():
+    navigation_dir = Path(__file__).parents[2] / 'car_navigation'
+    params = (navigation_dir / 'config' / 'nav2_params.yaml').read_text()
+    follow_path = params.split('    FollowPath:', 1)[1].split(
+        '\n# ==================== 全局代价地图', 1)[0]
+
+    assert 'xy_goal_tolerance: 0.05' in follow_path
+    assert 'trans_stopped_velocity: 0.02' in follow_path
