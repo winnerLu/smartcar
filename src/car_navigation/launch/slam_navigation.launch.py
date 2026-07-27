@@ -41,7 +41,6 @@ def generate_launch_description():
     nav_params = LaunchConfiguration('nav_params_file')
     use_sim_time = LaunchConfiguration('use_sim_time')
     clearance_radius = LaunchConfiguration('clearance_radius')
-    startup_escape_radius = LaunchConfiguration('startup_escape_radius')
 
     declare_slam_params = DeclareLaunchArgument(
         'slam_params_file', default_value=default_slam_params,
@@ -54,10 +53,7 @@ def generate_launch_description():
         description='仿真时间(实机 false)')
     declare_clearance_radius = DeclareLaunchArgument(
         'clearance_radius', default_value='0.175',
-        description='全局规划硬净空半径(m)，两倍为允许的最小通道宽度')
-    declare_startup_escape_radius = DeclareLaunchArgument(
-        'startup_escape_radius', default_value='0.20',
-        description='仅在SLAM初始(0,0)恢复原始自由栅格的固定起步区半径(m)')
+        description='窄通道闭合半径(m)，两倍为封闭的通道宽度阈值')
 
     # ---- SLAM(实时建图 + map->odom)----
     slam_node = Node(
@@ -68,7 +64,7 @@ def generate_launch_description():
         parameters=[slam_params, {'use_sim_time': use_sim_time}],
     )
 
-    # /map保留给SLAM与任务判断；全局规划统一使用硬净空地图。
+    # /map保留给SLAM与任务判断；规划使用仅封闭窄通道的地图。
     clearance_map = Node(
         package='car_navigation',
         executable='clearance_map.py',
@@ -80,10 +76,6 @@ def generate_launch_description():
             'output_map_topic': '/map_clearance',
             'clearance_radius': ParameterValue(
                 clearance_radius, value_type=float),
-            'startup_escape_radius': ParameterValue(
-                startup_escape_radius, value_type=float),
-            'startup_x': 0.0,
-            'startup_y': 0.0,
         }],
     )
 
@@ -105,7 +97,6 @@ def generate_launch_description():
         declare_nav_params,
         declare_sim_time,
         declare_clearance_radius,
-        declare_startup_escape_radius,
         slam_node,
         clearance_map,
         nav2_navigation,

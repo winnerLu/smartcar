@@ -256,7 +256,7 @@ def test_roadmap_failure_reselection_has_single_owner():
     assert "'navigate_to_pose_roadmap.xml'" in launch
 
 
-def test_roadmap_and_nav2_share_hard_clearance_map():
+def test_roadmap_and_nav2_share_narrow_passage_map():
     workspace_src = Path(__file__).parents[2]
     roadmap_params = (
         workspace_src / 'car_explore' / 'config' /
@@ -274,7 +274,8 @@ def test_roadmap_and_nav2_share_hard_clearance_map():
     assert 'map_topic: "/map_clearance"' in roadmap_params
     assert 'map_topic: /map_clearance' in nav_params
     assert "'clearance_radius', default_value='0.175'" in slam_launch
-    assert "'startup_escape_radius', default_value='0.20'" in slam_launch
+    assert 'startup_escape_radius' not in slam_launch
+    assert '窄通道闭合半径' in slam_launch
     assert "'output_map_topic': '/map_clearance'" in slam_launch
     assert 'inflation_radius: 0.10' in nav_params
 

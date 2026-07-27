@@ -106,15 +106,15 @@ roadmap_explorer_costmap:
       plugins: ["static_layer", "inflation_layer"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
-        # 与Nav2全局规划共用0.175m硬净空地图，Roadmap不会再选择一个
-        # Nav2只能经小于0.35m窄通道抵达的frontier。
+        # 与Nav2全局规划共用窄通道闭合地图，Roadmap不会再选择必须
+        # 经过小于约0.35m通道才能抵达的frontier。
         map_topic: "/map_clearance"
         map_subscribe_transient_local: true
         enabled: true
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         enabled: true
-        # 输入地图已经完成硬扩张，只保留一格软边界避免重复膨胀。
+        # 输入地图只封闭窄通道；保留一格软边界。
         inflation_radius: 0.05
         cost_scaling_factor: 5.0
         inflate_unknown: false

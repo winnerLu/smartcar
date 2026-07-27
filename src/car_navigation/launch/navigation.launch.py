@@ -52,7 +52,7 @@ def generate_launch_description():
         description='仿真时间(实机 false)')
     declare_clearance_radius = DeclareLaunchArgument(
         'clearance_radius', default_value='0.175',
-        description='全局规划硬净空半径(m)，两倍为允许的最小通道宽度')
+        description='窄通道闭合半径(m)，两倍为封闭的通道宽度阈值')
 
     clearance_map = Node(
         package='car_navigation',
