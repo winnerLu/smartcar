@@ -75,6 +75,9 @@ roadmap_explorer_node:
       # /map_clearance中投影到机器人可达的已知自由栅格，并远离地图边缘。
       frontier_goal_boundary_margin: 0.20
       frontier_goal_max_projection_distance: 0.60
+      # base_link落入膨胀/未知栅格时，从周围最近自由栅格启动连通搜索，
+      # 避免将整批正常Frontier连续误判为不可达。
+      frontier_goal_robot_seed_radius: 0.30
       # 20m x 20m 的保护边界，覆盖当前赛场且避免错误前沿无限扩张。
       exploration_boundary: [10.0, 10.0, 10.0, -10.0, -10.0, -10.0, -10.0, 10.0]
       abort_exploration_on_nav2_abort: false

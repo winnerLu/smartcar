@@ -45,7 +45,8 @@ inline FrontierGoalProjection projectFrontierGoalToKnownFree(
   const geometry_msgs::msg::Point & frontier,
   const geometry_msgs::msg::Point & robot,
   double boundary_margin,
-  double max_projection_distance)
+  double max_projection_distance,
+  double robot_seed_search_radius = 0.30)
 {
   FrontierGoalProjection result;
   const auto size_x = costmap.getSizeInCellsX();
@@ -77,8 +78,52 @@ inline FrontierGoalProjection projectFrontierGoalToKnownFree(
       return cost < nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE &&
              cost != nav2_costmap_2d::NO_INFORMATION;
     };
-  if (!is_traversable(robot_x, robot_y)) {
-    return result;
+  unsigned int seed_x = robot_x;
+  unsigned int seed_y = robot_y;
+  if (!is_traversable(seed_x, seed_y)) {
+    // The exploration costmap does not clear the robot footprint. Close to an
+    // inflated obstacle the cell containing base_link can therefore be
+    // INSCRIBED even though Nav2 still has a valid path away from it. Starting
+    // strictly at that one cell caused every frontier to be rejected in
+    // sequence. Seed the connectivity search from the nearest traversable
+    // cell around the robot instead.
+    const int seed_radius_cells = static_cast<int>(
+      std::max(1.0, std::ceil(robot_seed_search_radius / resolution)));
+    double nearest_seed_distance_sq = std::numeric_limits<double>::infinity();
+    bool found_seed = false;
+    for (int offset_y = -seed_radius_cells; offset_y <= seed_radius_cells; ++offset_y) {
+      for (int offset_x = -seed_radius_cells; offset_x <= seed_radius_cells; ++offset_x) {
+        const int candidate_x = static_cast<int>(robot_x) + offset_x;
+        const int candidate_y = static_cast<int>(robot_y) + offset_y;
+        if (
+          candidate_x < 0 || candidate_y < 0 ||
+          candidate_x >= static_cast<int>(size_x) ||
+          candidate_y >= static_cast<int>(size_y))
+        {
+          continue;
+        }
+        const double distance_sq =
+          static_cast<double>((offset_x * offset_x) + (offset_y * offset_y));
+        if (
+          distance_sq > static_cast<double>(seed_radius_cells * seed_radius_cells) ||
+          distance_sq >= nearest_seed_distance_sq)
+        {
+          continue;
+        }
+        const auto unsigned_x = static_cast<unsigned int>(candidate_x);
+        const auto unsigned_y = static_cast<unsigned int>(candidate_y);
+        if (!is_traversable(unsigned_x, unsigned_y)) {
+          continue;
+        }
+        seed_x = unsigned_x;
+        seed_y = unsigned_y;
+        nearest_seed_distance_sq = distance_sq;
+        found_seed = true;
+      }
+    }
+    if (!found_seed) {
+      return result;
+    }
   }
 
   const auto is_interior =
@@ -97,8 +142,8 @@ inline FrontierGoalProjection projectFrontierGoalToKnownFree(
 
   std::vector<bool> visited(static_cast<size_t>(size_x) * size_y, false);
   std::queue<std::pair<unsigned int, unsigned int>> pending;
-  pending.emplace(robot_x, robot_y);
-  visited[index(robot_x, robot_y)] = true;
+  pending.emplace(seed_x, seed_y);
+  visited[index(seed_x, seed_y)] = true;
 
   double best_distance_sq = std::numeric_limits<double>::infinity();
   geometry_msgs::msg::Point best_point;

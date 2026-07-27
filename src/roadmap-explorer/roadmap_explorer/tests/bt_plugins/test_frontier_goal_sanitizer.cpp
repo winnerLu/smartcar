@@ -86,4 +86,22 @@ TEST(FrontierGoalSanitizer, RejectsRobotOutsideLatestMap)
   EXPECT_FALSE(result.valid);
 }
 
+TEST(FrontierGoalSanitizer, UsesNearbyFreeSeedWhenRobotCellIsInflated)
+{
+  nav2_costmap_2d::Costmap2D costmap(
+    20, 20, 0.1, 0.0, 0.0, nav2_costmap_2d::NO_INFORMATION);
+  for (unsigned int y = 2; y <= 17; ++y) {
+    for (unsigned int x = 2; x <= 17; ++x) {
+      costmap.setCost(x, y, nav2_costmap_2d::FREE_SPACE);
+    }
+  }
+  costmap.setCost(10, 10, nav2_costmap_2d::INSCRIBED_INFLATED_OBSTACLE);
+
+  const auto result = projectFrontierGoalToKnownFree(
+    costmap, point(1.75, 1.05), point(1.05, 1.05), 0.20, 0.60, 0.30);
+
+  ASSERT_TRUE(result.valid);
+  EXPECT_LT(result.projection_distance, 0.30);
+}
+
 }  // namespace roadmap_explorer

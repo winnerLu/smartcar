@@ -54,12 +54,18 @@ namespace roadmap_explorer
         nav2_util::declare_parameter_if_not_declared(
             ros_node_ptr_, "explorationBT.frontier_goal_max_projection_distance",
             rclcpp::ParameterValue(0.60));
+        nav2_util::declare_parameter_if_not_declared(
+            ros_node_ptr_, "explorationBT.frontier_goal_robot_seed_radius",
+            rclcpp::ParameterValue(0.30));
         boundary_margin_ = std::max(
             0.0, ros_node_ptr_->get_parameter(
                 "explorationBT.frontier_goal_boundary_margin").as_double());
         max_projection_distance_ = std::max(
             boundary_margin_, ros_node_ptr_->get_parameter(
                 "explorationBT.frontier_goal_max_projection_distance").as_double());
+        robot_seed_search_radius_ = std::max(
+            0.0, ros_node_ptr_->get_parameter(
+                "explorationBT.frontier_goal_robot_seed_radius").as_double());
         LOG_INFO("SendNav2Goal Constructor");
     }
 
@@ -184,6 +190,7 @@ namespace roadmap_explorer
     bool cancel_due_to_invalid_goal_{false};
     double boundary_margin_{0.20};
     double max_projection_distance_{0.60};
+    double robot_seed_search_radius_{0.30};
 
     void markFrontierFailed(const FrontierPtr & frontier)
     {
@@ -212,7 +219,7 @@ namespace roadmap_explorer
             *(costmap->getMutex()));
         const auto projection = projectFrontierGoalToKnownFree(
             *costmap, frontier->getGoalPoint(), robot_pose.pose.position,
-            boundary_margin_, max_projection_distance_);
+            boundary_margin_, max_projection_distance_, robot_seed_search_radius_);
         if (!projection.valid) {
         LOG_WARN(
             "Rejecting frontier before Nav2 dispatch: reference=(" <<
