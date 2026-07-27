@@ -359,6 +359,14 @@ class RoadmapExploreMission(Node):
             return
 
         if self.state == 'EXPLORING':
+            # A complete Tag near the mission target is stronger arrival
+            # evidence than the SLAM endpoint-clearance test. In particular,
+            # the robot may already be over the parking board while nearby
+            # walls make the nominal pre-parking endpoint fail clearance.
+            # Hold stall recovery during the short confirmation window so it
+            # cannot dispatch a breadcrumb backtrack just before handoff.
+            if self._try_exploration_tag_handoff(now):
+                return
             self._update_exploration_progress(now)
             if (self.goal_directed_mode and
                     self.progressive_probe_enabled and
@@ -621,6 +629,7 @@ class RoadmapExploreMission(Node):
             return
         self.explore_goal_handle = goal_handle
         self.state = 'EXPLORING'
+        self._reset_tag_confirmation()
         self._reset_exploration_watchdog()
         self.next_direct_check_time = 0.0
         self.get_logger().info(
@@ -646,6 +655,21 @@ class RoadmapExploreMission(Node):
                 'Roadmap exploration and its Nav2 goal are fully canceled; '
                 'sending the final target goal')
             self._send_final_goal()
+            return
+
+        if self.state == 'CANCELING_EXPLORATION_FOR_TAG':
+            if wrapped.status not in (
+                    GoalStatus.STATUS_CANCELED,
+                    GoalStatus.STATUS_SUCCEEDED):
+                self._abort_mission(
+                    'Roadmap exploration did not stop cleanly before visual '
+                    f'parking handoff (status={wrapped.status})')
+                return
+            self.get_logger().info(
+                'Roadmap exploration and its Nav2 goal are fully stopped; '
+                'requiring a fresh complete Tag before visual parking takes '
+                'velocity ownership')
+            self._start_tag_acquisition(after_search=False)
             return
 
         if self.state == 'CANCELING_EXPLORATION_FOR_PROBE':
@@ -756,7 +780,11 @@ class RoadmapExploreMission(Node):
         # the final goal here causes Nav2 to treat it as a preemption; because
         # the two goals use different BT XML files, Nav2 rejects and aborts it.
         # _explore_result() sends the final goal after STATUS_CANCELED instead.
-        if self.state == 'CANCELING_EXPLORATION_FOR_PROBE':
+        if self.state == 'CANCELING_EXPLORATION_FOR_TAG':
+            self.get_logger().info(
+                'Roadmap exploration accepted cancellation; waiting for its '
+                'Nav2 goal to terminate before visual parking handoff')
+        elif self.state == 'CANCELING_EXPLORATION_FOR_PROBE':
             self.get_logger().info(
                 'Roadmap exploration accepted cancellation; waiting for its '
                 'Nav2 goal to terminate before progressive probing')
@@ -810,6 +838,71 @@ class RoadmapExploreMission(Node):
             'Roadmap exploration made no positional progress for '
             f'{self.exploration_stall_timeout:.1f}s; canceling it for '
             'breadcrumb backtracking or a short target-directed probe')
+
+    def _try_exploration_tag_handoff(self, now: float) -> bool:
+        """
+        Prioritize a nearby complete Tag over map-only exploration recovery.
+
+        ``True`` means the exploration tick has been consumed: either a fresh
+        valid Tag is accumulating its stability time, or Roadmap cancellation
+        has started. An invalid/out-of-region observation leaves normal
+        exploration and its watchdog active.
+        """
+        if (not self.goal_directed_mode or
+                not self.visual_parking_enabled or
+                self.target_pose is None):
+            self._reset_tag_confirmation()
+            return False
+
+        robot = self._robot_pose()
+        if robot is None:
+            self._reset_tag_confirmation()
+            return False
+        target = self.target_pose.pose.position
+        target_distance = math.hypot(
+            target.x - robot[0], target.y - robot[1])
+        if target_distance > self.tag_handoff_max_target_distance:
+            self._reset_tag_confirmation()
+            return False
+
+        confirmation_started = self.tag_stable_since is not None
+        confirmed = self._tag_confirmed(now)
+        if self.tag_stable_since is None:
+            # The robot is near the nominal target, but there is no fresh,
+            # complete, quality-filtered Tag. Map exploration must continue.
+            return False
+        if not confirmation_started:
+            self.get_logger().info(
+                'Complete Tag candidate detected during Roadmap exploration '
+                f'{target_distance:.2f}m from the target; holding stall '
+                f'recovery for {self.tag_confirm_time:.2f}s confirmation')
+        if not confirmed:
+            return True
+
+        self._cancel_exploration_for_tag(robot, target_distance)
+        return True
+
+    def _cancel_exploration_for_tag(
+            self, robot: Tuple[float, float, float],
+            target_distance: float):
+        if self.explore_goal_handle is None:
+            self._abort_mission(
+                'Cannot hand off to visual parking: Roadmap goal handle is '
+                'missing')
+            return
+
+        # If the Tag disappears while Roadmap/Nav2 is stopping, bounded search
+        # needs an anchor. The current pose is already physically reached and
+        # therefore does not depend on the nominal pre-parking clearance test.
+        self.final_candidate = self._make_pose(
+            robot[0], robot[1], robot[2])
+        self.state = 'CANCELING_EXPLORATION_FOR_TAG'
+        future = self.explore_goal_handle.cancel_goal_async()
+        future.add_done_callback(self._explore_cancel_done)
+        self.get_logger().warning(
+            'Stable complete Tag confirmed during Roadmap exploration at '
+            f'target distance {target_distance:.2f}m; canceling Roadmap and '
+            'its Nav2 goal before visual parking handoff')
 
     def _prepare_stall_recovery(self):
         robot = self._robot_pose()

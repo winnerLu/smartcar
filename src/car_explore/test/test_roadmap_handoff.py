@@ -155,6 +155,49 @@ def test_initial_known_path_skips_roadmap_before_nav2_handoff():
     assert 'self._send_final_goal()' in mission
 
 
+def test_exploration_tag_handoff_precedes_stall_backtracking():
+    mission = (
+        Path(__file__).parents[1]
+        / 'scripts'
+        / 'roadmap_explore_mission.py'
+    ).read_text()
+
+    exploring_block = mission.split(
+        "        if self.state == 'EXPLORING':", 1)[1].split(
+        "        if self.state in (", 1)[0]
+    assert (
+        exploring_block.index('self._try_exploration_tag_handoff(now)') <
+        exploring_block.index('self._exploration_stalled(now)')
+    )
+
+    handoff_block = mission.split(
+        '    def _try_exploration_tag_handoff', 1)[1].split(
+        '    def _cancel_exploration_for_tag', 1)[0]
+    assert 'self.tag_handoff_max_target_distance' in handoff_block
+    assert 'self._tag_confirmed(now)' in handoff_block
+    assert 'return True' in handoff_block
+    assert 'self._known_safe_target_pose()' not in handoff_block
+
+
+def test_exploration_tag_handoff_waits_for_roadmap_nav2_to_stop():
+    mission = (
+        Path(__file__).parents[1]
+        / 'scripts'
+        / 'roadmap_explore_mission.py'
+    ).read_text()
+
+    assert "'CANCELING_EXPLORATION_FOR_TAG'" in mission
+    result_block = mission.split(
+        '    def _explore_result', 1)[1].split(
+        '    def _request_direct_path', 1)[0]
+    tag_result = result_block.split(
+        "if self.state == 'CANCELING_EXPLORATION_FOR_TAG':", 1)[1].split(
+        "if self.state == 'CANCELING_EXPLORATION_FOR_PROBE':", 1)[0]
+    assert 'GoalStatus.STATUS_CANCELED' in tag_result
+    assert 'self._start_tag_acquisition(after_search=False)' in tag_result
+    assert 'self._activate_visual_parking()' not in tag_result
+
+
 def test_position_arrival_has_no_heading_requirement():
     # The helper has no yaw argument by design: a car facing any direction at
     # this XY position is considered ready for Tag acquisition.
