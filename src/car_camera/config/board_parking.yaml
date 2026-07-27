@@ -18,8 +18,10 @@ board_parker:
     board_margin: 0.005
     footprint_x: [0.197, 0.197, -0.033, -0.033]
     footprint_y: [0.093, -0.093, -0.093, 0.093]
-    # Smooth differential-drive pose controller.  All four board-edge
-    # directions are equivalent, so an oblique approach selects the nearest.
+    # Smooth differential-drive pose controller.  Score all four equivalent
+    # board-edge poses once, then lock the lowest-cost one for this attempt.
+    candidate_heading_weight: 0.10
+    candidate_reverse_penalty: 0.03
     kp_distance: 0.8
     kp_bearing: 1.8
     kp_edge: 0.8
@@ -32,6 +34,9 @@ board_parker:
     position_tolerance: 0.025
     edge_tolerance_deg: 15.0
     min_footprint_overlap: 0.90
+    # If visual geometry confirms nearly the entire chassis is already on the
+    # board, stop without forcing it to rotate toward one exact final heading.
+    inside_overlap_threshold: 0.97
     slowdown_distance: 0.10
     loss_timeout: 0.35
     max_pose_jump: 0.05

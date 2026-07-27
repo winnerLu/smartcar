@@ -181,6 +181,51 @@ def test_locked_board_heading_produces_a_fixed_axle_goal():
     assert math.isclose(heading_error, locked_heading, abs_tol=1e-9)
 
 
+def test_four_way_goal_selection_prefers_low_motion_pose_and_locks_an_edge():
+    goal_x, goal_y, goal_heading, score, reverse_needed = (
+        MODULE.select_parking_goal(
+            0.15, 0.03, math.radians(44.0),
+            0.0, 0.0, 0.0,
+            0.082, 0.0, 0.10, 0.03, True))
+    equivalent_error = MODULE.wrap_period(
+        goal_heading - math.radians(44.0), math.pi / 2.0)
+    assert abs(equivalent_error) < 1e-9
+    assert abs(goal_heading) <= math.pi / 4.0
+    assert math.isclose(
+        math.hypot(goal_x, goal_y) +
+        0.10 * abs(MODULE.wrap_period(goal_heading, 2.0 * math.pi)),
+        score, abs_tol=1e-9)
+    assert not reverse_needed
+
+
+def test_four_way_goal_selection_can_avoid_an_unnecessary_reverse():
+    _, _, goal_heading, _, reverse_needed = MODULE.select_parking_goal(
+        -0.03, 0.0, 0.0,
+        0.0, 0.0, 0.0,
+        0.082, 0.0, 0.0, 0.20, True)
+    assert not reverse_needed
+    assert math.isclose(
+        abs(MODULE.wrap_period(goal_heading, 2.0 * math.pi)),
+        math.pi, abs_tol=1e-9)
+
+
+def test_nearly_full_board_overlap_completes_without_heading_alignment():
+    mode = MODULE.parking_completion_mode(
+        0.07, 0.975, math.radians(61.0),
+        0.025, 0.90, math.radians(15.0), 0.97)
+    assert mode == 'inside'
+
+
+def test_strict_aligned_completion_remains_as_fallback():
+    mode = MODULE.parking_completion_mode(
+        0.02, 0.93, math.radians(8.0),
+        0.025, 0.90, math.radians(15.0), 0.97)
+    assert mode == 'aligned'
+    assert MODULE.parking_completion_mode(
+        0.07, 0.93, math.radians(8.0),
+        0.025, 0.90, math.radians(15.0), 0.97) is None
+
+
 def test_close_goal_fades_bearing_and_prioritizes_locked_heading():
     linear, angular = MODULE.compute_parking_command(
         0.001, 0.010, math.radians(-25.0),

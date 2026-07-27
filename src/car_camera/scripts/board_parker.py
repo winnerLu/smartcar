@@ -134,6 +134,58 @@ def goal_error_in_robot(
         wrap_period(goal_heading - robot_heading, 2.0 * math.pi))
 
 
+def select_parking_goal(
+        board_x, board_y, board_heading,
+        robot_x, robot_y, robot_heading,
+        target_forward, target_left,
+        heading_weight, reverse_penalty, allow_reverse):
+    """Choose and return the lowest-cost one of four board-edge goal poses.
+
+    Translation, required heading change, and reversing are all considered.
+    The caller locks the returned edge direction for the rest of the parking
+    attempt so small pose-estimation changes cannot switch the selected side.
+    """
+    nearest_heading = nearest_equivalent_heading(
+        board_heading, robot_heading)
+    best = None
+    for order, offset in enumerate(
+            (0.0, math.pi / 2.0, -math.pi / 2.0, math.pi)):
+        goal_heading = nearest_heading + offset
+        goal_x, goal_y = parking_goal_from_board(
+            board_x, board_y, goal_heading,
+            target_forward, target_left)
+        error_forward, error_left, heading_error = goal_error_in_robot(
+            goal_x, goal_y, goal_heading,
+            robot_x, robot_y, robot_heading)
+        distance = math.hypot(error_forward, error_left)
+        bearing = math.atan2(error_left, error_forward)
+        reverse_needed = allow_reverse and abs(bearing) > math.pi / 2.0
+        score = distance + heading_weight * abs(heading_error)
+        if reverse_needed:
+            score += reverse_penalty
+        candidate = (
+            score, abs(heading_error), distance, order,
+            goal_x, goal_y, goal_heading, reverse_needed)
+        if best is None or candidate[:4] < best[:4]:
+            best = candidate
+    return best[4], best[5], best[6], best[0], best[7]
+
+
+def parking_completion_mode(
+        position_error, overlap, heading_error,
+        position_tolerance, min_footprint_overlap, edge_tolerance,
+        inside_overlap_threshold):
+    """Return the completion rule satisfied by a visually confirmed pose."""
+    if overlap >= inside_overlap_threshold:
+        return 'inside'
+    if (
+            position_error <= position_tolerance and
+            overlap >= min_footprint_overlap and
+            abs(heading_error) <= edge_tolerance):
+        return 'aligned'
+    return None
+
+
 def footprint_inside_board(
         board_position, board_orientation, footprint,
         board_width, board_height, margin):
@@ -342,6 +394,15 @@ class BoardParker(Node):
             self.declare_parameter('edge_tolerance_deg', 15.0).value))
         self.min_footprint_overlap = float(
             self.declare_parameter('min_footprint_overlap', 0.90).value)
+        self.inside_overlap_threshold = float(
+            self.declare_parameter(
+                'inside_overlap_threshold', 0.97).value)
+        self.candidate_heading_weight = float(
+            self.declare_parameter(
+                'candidate_heading_weight', 0.10).value)
+        self.candidate_reverse_penalty = float(
+            self.declare_parameter(
+                'candidate_reverse_penalty', 0.03).value)
         self.slowdown_distance = float(
             self.declare_parameter('slowdown_distance', 0.10).value)
         self.loss_timeout = float(self.declare_parameter('loss_timeout', 0.35).value)
@@ -620,16 +681,33 @@ class BoardParker(Node):
                 robot_heading_odom = planar_heading(
                     odom_from_base.transform.rotation)
                 board_heading_odom = planar_heading(odom_orientation)
-                heading_reference = (
-                    robot_heading_odom
-                    if self.desired_heading_odom is None
-                    else self.desired_heading_odom)
-                self.desired_heading_odom = nearest_equivalent_heading(
-                    board_heading_odom, heading_reference)
-                self.goal_odom_position = parking_goal_from_board(
-                    odom_position[0], odom_position[1],
-                    self.desired_heading_odom,
-                    self.target_forward, self.target_left)
+                if self.desired_heading_odom is None:
+                    (
+                        goal_x, goal_y, self.desired_heading_odom,
+                        candidate_score, reverse_needed,
+                    ) = select_parking_goal(
+                        odom_position[0], odom_position[1],
+                        board_heading_odom,
+                        robot_odom_x, robot_odom_y, robot_heading_odom,
+                        self.target_forward, self.target_left,
+                        self.candidate_heading_weight,
+                        self.candidate_reverse_penalty,
+                        self.allow_reverse)
+                    self.goal_odom_position = (goal_x, goal_y)
+                    self.get_logger().info(
+                        'Locked four-way parking pose: heading=%+.1fdeg '
+                        'score=%.3f reverse=%s' %
+                        (math.degrees(self.desired_heading_odom),
+                         candidate_score, reverse_needed))
+                else:
+                    # Follow small board-pose corrections without changing
+                    # which of its four equivalent edge directions was chosen.
+                    self.desired_heading_odom = nearest_equivalent_heading(
+                        board_heading_odom, self.desired_heading_odom)
+                    self.goal_odom_position = parking_goal_from_board(
+                        odom_position[0], odom_position[1],
+                        self.desired_heading_odom,
+                        self.target_forward, self.target_left)
             except (TransformException, ValueError) as exc:
                 self.get_logger().warn(
                     'Cannot update odometry board memory: %s' % str(exc),
@@ -736,18 +814,21 @@ class BoardParker(Node):
             self.single_tag_stable_frames
             if self.visible_tag_count == 1
             else self.stable_frames_required)
+        completion_mode = parking_completion_mode(
+            position_error, overlap, heading_error,
+            self.position_tolerance, self.min_footprint_overlap,
+            self.edge_tolerance, self.inside_overlap_threshold)
 
-        if (visual_tracking and
-                position_error <= self.position_tolerance and
-                overlap >= self.min_footprint_overlap and edge_aligned):
+        if visual_tracking and completion_mode is not None:
             self.stable_frames += 1
             if self.stable_frames >= required_stable_frames:
                 self.parked = True
                 self.publish_complete(True)
                 self.get_logger().info(
-                    'Parking complete: error=%.3fm edge=%.1fdeg '
+                    'Parking complete (%s): error=%.3fm edge=%.1fdeg '
                     'footprint_overlap=%.0f%% tags=%d' %
-                    (position_error, math.degrees(heading_error),
+                    (completion_mode, position_error,
+                     math.degrees(heading_error),
                      overlap * 100.0, self.visible_tag_count))
             self.last_linear_command = 0.0
             self.last_angular_command = 0.0
