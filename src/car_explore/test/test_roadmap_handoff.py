@@ -340,13 +340,13 @@ def test_dwb_rotate_to_goal_tolerance_matches_precise_position_checker():
     assert 'trans_stopped_velocity: 0.02' in follow_path
 
 
-def test_dwb_and_velocity_smoother_share_028_forward_limit():
+def test_dwb_and_velocity_smoother_share_022_forward_limit():
     navigation_dir = Path(__file__).parents[2] / 'car_navigation'
     params = (navigation_dir / 'config' / 'nav2_params.yaml').read_text()
     follow_path = params.split('    FollowPath:', 1)[1].split(
         '\n# ==================== 全局代价地图', 1)[0]
     smoother = params.split('velocity_smoother:', 1)[1]
 
-    assert 'max_vel_x: 0.28' in follow_path
-    assert 'max_speed_xy: 0.28' in follow_path
-    assert 'max_velocity: [0.28, 0.0, 1.2]' in smoother
+    assert 'max_vel_x: 0.22' in follow_path
+    assert 'max_speed_xy: 0.22' in follow_path
+    assert 'max_velocity: [0.22, 0.0, 1.2]' in smoother

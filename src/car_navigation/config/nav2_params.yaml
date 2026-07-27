@@ -103,15 +103,15 @@ controller_server:
       trans_stopped_velocity: 0.02
       # 速度限制(差速:x 前进 + z 转向,y 恒 0)
       min_vel_x: 0.0             # 无后向传感器,禁止倒车
-      # 赛场实测后将巡航上限提高到0.28m/s；速度平滑器使用相同上限。
-      # 小障碍仍由10Hz激光、完整footprint和局部代价地图进行避让。
-      max_vel_x: 0.28
+      # 未知区探索且未启用外层碰撞监控时，保留激光、局部代价地图和
+      # 底盘制动的反应余量；速度平滑器使用相同上限。
+      max_vel_x: 0.22
       min_vel_y: 0.0
       max_vel_y: 0.0
       # 转弯时小障碍更容易在相邻扫描间丢失，先限制到约46deg/s。
       max_vel_theta: 0.8
       min_speed_xy: 0.0
-      max_speed_xy: 0.28
+      max_speed_xy: 0.22
       min_speed_theta: 0.0
       # 加速度限制
       acc_lim_x: 1.0
@@ -260,7 +260,7 @@ velocity_smoother:
     smoothing_frequency: 20.0
     scale_velocities: false
     feedback: "OPEN_LOOP"
-    max_velocity: [0.28, 0.0, 1.2]
+    max_velocity: [0.22, 0.0, 1.2]
     min_velocity: [0.0, 0.0, -1.0]
     max_accel: [1.0, 0.0, 2.0]
     max_decel: [-1.0, 0.0, -2.0]
