@@ -103,15 +103,15 @@ controller_server:
       trans_stopped_velocity: 0.02
       # 速度限制(差速:x 前进 + z 转向,y 恒 0)
       min_vel_x: 0.0             # 无后向传感器,禁止倒车
-      # 小障碍实车复测：降低前进速度，为10Hz激光和局部代价地图留出
-      # 更多观测/制动时间。确认12cm x 7cm障碍可稳定避让后再逐级提速。
-      max_vel_x: 0.20
+      # 赛场实测后将巡航上限提高到0.28m/s；速度平滑器使用相同上限。
+      # 小障碍仍由10Hz激光、完整footprint和局部代价地图进行避让。
+      max_vel_x: 0.28
       min_vel_y: 0.0
       max_vel_y: 0.0
       # 转弯时小障碍更容易在相邻扫描间丢失，先限制到约46deg/s。
       max_vel_theta: 0.8
       min_speed_xy: 0.0
-      max_speed_xy: 0.20
+      max_speed_xy: 0.28
       min_speed_theta: 0.0
       # 加速度限制
       acc_lim_x: 1.0
