@@ -179,8 +179,9 @@ class RoadmapExploreMission(Node):
             'startup_escape_scan_topic': '/scan',
             'startup_escape_odom_frame': 'odom',
             'startup_escape_distance': 0.20,
+            'startup_escape_distance_tolerance': 0.005,
             'startup_escape_speed': 0.08,
-            'startup_escape_timeout': 4.0,
+            'startup_escape_timeout': 5.0,
             'startup_escape_settle_time': 1.0,
             'startup_escape_max_yaw_error_deg': 8.0,
             'startup_escape_heading_kp': 1.5,
@@ -261,6 +262,7 @@ class RoadmapExploreMission(Node):
                 'startup_escape_enabled', 'startup_escape_cmd_topic',
                 'startup_escape_scan_topic', 'startup_escape_odom_frame',
                 'startup_escape_distance',
+                'startup_escape_distance_tolerance',
                 'startup_escape_speed', 'startup_escape_timeout',
                 'startup_escape_settle_time',
                 'startup_escape_max_yaw_error_deg',
@@ -317,6 +319,9 @@ class RoadmapExploreMission(Node):
         self.startup_escape_enabled = bool(self.startup_escape_enabled)
         self.startup_escape_distance = max(
             0.0, float(self.startup_escape_distance))
+        self.startup_escape_distance_tolerance = max(
+            0.0, min(
+                0.02, float(self.startup_escape_distance_tolerance)))
         self.startup_escape_speed = max(
             0.0, float(self.startup_escape_speed))
         self.startup_escape_timeout = max(
@@ -729,22 +734,30 @@ class RoadmapExploreMission(Node):
         if self.startup_escape_start is None:
             self._abort_mission('Startup escape has no recorded start pose')
             return
-        if now - self.startup_escape_start_time > self.startup_escape_timeout:
-            self._publish_startup_escape_stop()
-            self._abort_mission(
-                'Startup escape timed out before reaching '
-                f'{self.startup_escape_distance:.2f}m')
-            return
 
         robot = self._pose_in_frame(str(self.startup_escape_odom_frame))
         if robot is None:
             self._publish_startup_escape_stop()
+            if (
+                    now - self.startup_escape_start_time >
+                    self.startup_escape_timeout):
+                self._abort_mission(
+                    'Startup escape timed out while waiting for odometry')
             return
         progress, lateral_drift, heading_error = startup_escape_metrics(
             self.startup_escape_start, robot)
-        if progress >= self.startup_escape_distance:
+        if (
+                progress + self.startup_escape_distance_tolerance >=
+                self.startup_escape_distance):
             self._finish_startup_escape(
                 now, progress, lateral_drift, heading_error)
+            return
+        if now - self.startup_escape_start_time > self.startup_escape_timeout:
+            self._publish_startup_escape_stop()
+            self._abort_mission(
+                'Startup escape timed out before reaching '
+                f'{self.startup_escape_distance:.2f}m '
+                f'(measured {progress:.3f}m)')
             return
         if progress < -0.02:
             self._publish_startup_escape_stop()

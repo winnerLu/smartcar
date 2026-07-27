@@ -143,8 +143,9 @@ roadmap_explore_mission:
     startup_escape_scan_topic: /scan
     startup_escape_odom_frame: odom
     startup_escape_distance: 0.20
+    startup_escape_distance_tolerance: 0.005
     startup_escape_speed: 0.08
-    startup_escape_timeout: 4.0
+    startup_escape_timeout: 5.0
     startup_escape_settle_time: 1.0
     startup_escape_max_yaw_error_deg: 8.0
     startup_escape_heading_kp: 1.5
