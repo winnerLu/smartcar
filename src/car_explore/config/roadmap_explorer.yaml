@@ -71,6 +71,10 @@ roadmap_explorer_node:
     explorationBT:
       # 4Hz轮询已足够响应Nav2结果；降低Roadmap主循环空转，给SLAM和规划器留CPU。
       bt_sleep_ms: 250
+      # Frontier本身是未知栅格，不能直接作为Nav2终点。发送前在最新
+      # /map_clearance中投影到机器人可达的已知自由栅格，并远离地图边缘。
+      frontier_goal_boundary_margin: 0.20
+      frontier_goal_max_projection_distance: 0.60
       # 20m x 20m 的保护边界，覆盖当前赛场且避免错误前沿无限扩张。
       exploration_boundary: [10.0, 10.0, 10.0, -10.0, -10.0, -10.0, -10.0, 10.0]
       abort_exploration_on_nav2_abort: false

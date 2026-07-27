@@ -11,18 +11,18 @@
     <RecoveryNode number_of_retries="1" name="RoadmapNavigateRecovery">
       <PipelineSequence name="NavigateWithReplanning">
         <RateController hz="1.0">
-          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
-            <ReactiveSequence>
-              <PlannerSelector selected_planner="{selected_planner}"
-                default_planner="GridBased" topic_name="planner_selector"/>
-              <GoalUpdater input_goal="{goal}" output_goal="{updated_goal}">
-                <ComputePathToPose goal="{updated_goal}" path="{path}"
-                  planner_id="{selected_planner}" server_timeout="2000"/>
-              </GoalUpdater>
-            </ReactiveSequence>
-            <ClearEntireCostmap name="ClearGlobalCostmap-Context"
-              service_name="global_costmap/clear_entirely_global_costmap"/>
-          </RecoveryNode>
+          <!-- A failed replan must propagate immediately so PipelineSequence
+               halts FollowPath. Do not clear/retry here while the controller
+               continues executing its previous path. The outer RecoveryNode
+               owns the one bounded clear-and-retry cycle. -->
+          <ReactiveSequence>
+            <PlannerSelector selected_planner="{selected_planner}"
+              default_planner="GridBased" topic_name="planner_selector"/>
+            <GoalUpdater input_goal="{goal}" output_goal="{updated_goal}">
+              <ComputePathToPose goal="{updated_goal}" path="{path}"
+                planner_id="{selected_planner}" server_timeout="2000"/>
+            </GoalUpdater>
+          </ReactiveSequence>
         </RateController>
         <FollowPath path="{path}" controller_id="FollowPath"
           goal_checker_id="roadmap_goal_checker" server_timeout="2000"/>

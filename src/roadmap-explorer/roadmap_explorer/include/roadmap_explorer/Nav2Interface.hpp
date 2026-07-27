@@ -114,9 +114,9 @@ protected:
   void nav2GoalResultCallback(const typename GoalHandle::WrappedResult & result);
   void nav2GoalResponseCallback(const typename GoalHandle::SharedPtr & goal_handle);
 
-  rclcpp_action::Client<ActionT>::SharedPtr nav2Client_;
+  typename rclcpp_action::Client<ActionT>::SharedPtr nav2Client_;
   std::mutex nav2Clientlock_;
-  rclcpp_action::Client<ActionT>::SendGoalOptions nav2_goal_options_;
+  typename rclcpp_action::Client<ActionT>::SendGoalOptions nav2_goal_options_;
   rclcpp::CallbackGroup::SharedPtr nav2_client_callback_group_;
   rclcpp_lifecycle::LifecyclePublisher<geometry_msgs::msg::PoseStamped>::SharedPtr
     updated_goal_publisher_;
@@ -125,6 +125,7 @@ protected:
   NavGoalStatus nav2_goal_state_;
 
   typename rclcpp_action::ClientGoalHandle<ActionT>::SharedPtr current_goal_handle_;
+  bool cancel_when_goal_accepted_{false};
   bool shutting_down_ = false;
 
   std::shared_ptr<nav2_util::LifecycleNode> node_;

@@ -120,6 +120,19 @@ void Nav2Interface<ActionT>::cancelAllGoals()
 {
   std::lock_guard<std::recursive_mutex> lock(goal_state_mutex_);
   LOG_INFO("Cancelling goal.");
+  if (
+    nav2_goal_state_ == NavGoalStatus::SENDING_GOAL &&
+    current_goal_handle_ == nullptr)
+  {
+    // The action server has not returned a handle yet, so there is nothing
+    // that can be cancelled synchronously. Remember the request and cancel it
+    // as soon as the goal response arrives. Otherwise a halted Roadmap BT can
+    // leave a stale Nav2 goal running.
+    cancel_when_goal_accepted_ = true;
+    LOG_WARN("Goal is still being accepted; deferring cancellation until its handle arrives");
+    return;
+  }
+
   action_msgs::srv::CancelGoal::Response response;
   if (sendCancelWaitForResponse(response)) {
     if (response.return_code == action_msgs::srv::CancelGoal::Response::ERROR_NONE) {
@@ -142,6 +155,7 @@ void Nav2Interface<ActionT>::nav2GoalResultCallback(
 {
   std::lock_guard<std::recursive_mutex> lock(goal_state_mutex_);
   if (!current_goal_handle_) {
+    cancel_when_goal_accepted_ = false;
     LOG_ERROR("Received result for a goal that does not exist. Ignoring.");
     return;
   }
@@ -166,6 +180,7 @@ void Nav2Interface<ActionT>::nav2GoalResultCallback(
       LOG_ERROR("Unknown nav2 goal result code");
   }
   current_goal_handle_.reset();
+  cancel_when_goal_accepted_ = false;
   LOG_INFO("Nav2 result callback executed");
 }
 
@@ -177,10 +192,19 @@ void Nav2Interface<ActionT>::nav2GoalResponseCallback(
   if (!goal_handle) {
     LOG_ERROR("Goal was rejected by Nav2 server");
     nav2_goal_state_ = NavGoalStatus::REJECTED;
+    cancel_when_goal_accepted_ = false;
   } else {
     LOG_INFO("Goal accepted by Nav2 server, waiting for result");
     current_goal_handle_ = goal_handle;
-    nav2_goal_state_ = NavGoalStatus::ONGOING;
+    if (cancel_when_goal_accepted_) {
+      LOG_WARN("Cancelling the newly accepted goal because its Roadmap BT was already halted");
+      nav2_goal_state_ = NavGoalStatus::CANCELLING;
+      cancel_when_goal_accepted_ = false;
+      std::lock_guard<std::mutex> client_lock(nav2Clientlock_);
+      (void)nav2Client_->async_cancel_goal(goal_handle);
+    } else {
+      nav2_goal_state_ = NavGoalStatus::ONGOING;
+    }
   }
 }
 
@@ -216,6 +240,7 @@ bool Nav2Interface<ActionT>::sendGoal(geometry_msgs::msg::PoseStamped & pose)
     return false;
   }
   std::lock_guard<std::recursive_mutex> lock(this->goal_state_mutex_);
+  cancel_when_goal_accepted_ = false;
   auto goal_pose = pose;
   goal_pose.header.stamp = this->node_->get_clock()->now();
 

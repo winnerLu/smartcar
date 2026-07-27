@@ -63,3 +63,12 @@ target_link_libraries(test_bt_plugin_integration
   roadmap_explorer_utils
   roadmap_explorer_bt_plugins
 )
+
+
+# Frontier dispatch safety projection
+ament_add_gtest(test_frontier_goal_sanitizer
+  test_frontier_goal_sanitizer.cpp
+)
+ament_target_dependencies(test_frontier_goal_sanitizer
+  ${dependencies}
+)
