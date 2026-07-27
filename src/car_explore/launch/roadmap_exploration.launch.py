@@ -91,7 +91,7 @@ def generate_launch_description():
             'video_device', default_value='/dev/camera_c270'),
         DeclareLaunchArgument(
             'preparking_distance', default_value='0.35',
-            description='Nav2预泊车点位于标称终点前方的距离(m)'),
+            description='沿当前可达Nav2路径从目标向后量取的预泊车距离(m)'),
         DeclareLaunchArgument(
             'position_arrival_tolerance', default_value='0.06',
             description='Nav2位置到达容差(m)，不检查终点航向'),
