@@ -118,6 +118,69 @@ def test_progressive_probe_rejects_sideways_points_without_progress():
     assert points == []
 
 
+def test_target_reveal_moves_toward_target_and_prioritizes_centerline():
+    points = HANDOFF.target_reveal_points(
+        preparking=(3.20, 0.0),
+        target=(3.55, 0.0),
+        forward_offsets=(0.10, 0.15, 0.20),
+        lateral_offsets=(0.0, 0.08, -0.08),
+        min_target_standoff=0.12)
+
+    assert all(
+        math.isclose(point[1], 0.0, abs_tol=1e-9)
+        for point in points[:3])
+    assert all(
+        math.isclose(point[0], expected, abs_tol=1e-9)
+        for point, expected in zip(points[:3], (3.30, 3.35, 3.40)))
+    assert all(x > 3.20 for x, _ in points)
+    assert all(x <= 3.43 + 1e-9 for x, _ in points)
+
+
+def test_target_reveal_clamps_short_approach_without_overshoot():
+    points = HANDOFF.target_reveal_points(
+        preparking=(0.0, 0.0),
+        target=(0.18, 0.0),
+        forward_offsets=(0.10, 0.15, 0.20),
+        lateral_offsets=(0.0,),
+        min_target_standoff=0.12)
+
+    assert len(points) == 1
+    assert math.isclose(points[0][0], 0.06, abs_tol=1e-9)
+    assert math.isclose(points[0][1], 0.0, abs_tol=1e-9)
+
+
+def test_target_local_reveal_precedes_breadcrumb_and_stays_known_safe():
+    package_dir = Path(__file__).parents[1]
+    params = (package_dir / 'config' / 'roadmap_explorer.yaml').read_text()
+    mission = (
+        package_dir / 'scripts' / 'roadmap_explore_mission.py').read_text()
+    launch = (
+        package_dir / 'launch' / 'roadmap_exploration.launch.py').read_text()
+
+    assert 'target_local_reveal_enabled: true' in params
+    assert 'target_local_reveal_known_ratio: 1.0' in params
+    assert 'target_local_reveal_max_attempts: 3' in params
+    assert "'target_local_reveal_enabled': True" in mission
+    assert "'reveal': 'SENDING_TARGET_REVEAL_NAVIGATION'" in mission
+    assert 'self._clearance_status(msg, approach_cell) != \'unknown\'' in mission
+    assert 'self._known_free_line(msg, robot_cell, target_cell)' in mission
+
+    recovery = mission.split(
+        '    def _prepare_stall_recovery', 1)[1].split(
+        '    def _send_next_backtrack_candidate', 1)[0]
+    assert (
+        recovery.index('self._prepare_target_local_reveal()') <
+        recovery.index('breadcrumb_backtrack_points(')
+    )
+    reveal_plan = mission.split(
+        '    def _target_reveal_plan_result', 1)[1].split(
+        '    def _complete_target_local_reveal', 1)[0]
+    assert 'sample_stride=1' in reveal_plan
+    assert 'self.target_local_reveal_known_ratio' in reveal_plan
+    assert "'target_local_reveal_enabled'" in launch
+    assert "'target_local_reveal_max_attempts'" in launch
+
+
 def test_progressive_probe_runtime_wiring_is_conservative():
     package_dir = Path(__file__).parents[1]
     params = (package_dir / 'config' / 'roadmap_explorer.yaml').read_text()

@@ -30,6 +30,7 @@ from roadmap_handoff import (
     preparking_point,
     progressive_probe_points,
     tag_observation_valid,
+    target_reveal_points,
 )
 
 
@@ -135,6 +136,12 @@ class RoadmapExploreMission(Node):
         self.probe_attempts = 0
         self.probe_failures = 0
         self.probe_settle_start_time = 0.0
+        self.pending_target_reveal = False
+        self.target_reveal_candidates: List[Point] = []
+        self.target_reveal_index = 0
+        self.target_reveal_plan_candidate: Optional[PoseStamped] = None
+        self.target_reveal_attempts = 0
+        self.target_reveal_settle_start_time = 0.0
         self.timer = self.create_timer(0.5, self._tick)
 
     def _declare_parameters(self):
@@ -193,6 +200,13 @@ class RoadmapExploreMission(Node):
             'progressive_probe_settle_time': 1.0,
             'progressive_probe_max_attempts': 6,
             'progressive_probe_max_failures': 3,
+            'target_local_reveal_enabled': True,
+            'target_local_reveal_forward_offsets': [0.10, 0.15, 0.20],
+            'target_local_reveal_lateral_offsets': [0.0, 0.08, -0.08],
+            'target_local_reveal_min_standoff': 0.12,
+            'target_local_reveal_known_ratio': 1.0,
+            'target_local_reveal_settle_time': 1.5,
+            'target_local_reveal_max_attempts': 3,
             'mission_timeout': 300.0,
             'free_threshold': 20,
             'occupied_threshold': 65,
@@ -234,6 +248,13 @@ class RoadmapExploreMission(Node):
                 'progressive_probe_settle_time',
                 'progressive_probe_max_attempts',
                 'progressive_probe_max_failures',
+                'target_local_reveal_enabled',
+                'target_local_reveal_forward_offsets',
+                'target_local_reveal_lateral_offsets',
+                'target_local_reveal_min_standoff',
+                'target_local_reveal_known_ratio',
+                'target_local_reveal_settle_time',
+                'target_local_reveal_max_attempts',
                 'mission_timeout', 'free_threshold', 'occupied_threshold',
                 'endpoint_clearance'):
             setattr(self, name, self.get_parameter(name).value)
@@ -320,6 +341,22 @@ class RoadmapExploreMission(Node):
             1, int(self.progressive_probe_max_attempts))
         self.progressive_probe_max_failures = max(
             1, int(self.progressive_probe_max_failures))
+        self.target_local_reveal_enabled = bool(
+            self.target_local_reveal_enabled)
+        self.target_local_reveal_forward_offsets = tuple(
+            max(0.0, float(value))
+            for value in self.target_local_reveal_forward_offsets)
+        self.target_local_reveal_lateral_offsets = tuple(
+            float(value)
+            for value in self.target_local_reveal_lateral_offsets)
+        self.target_local_reveal_min_standoff = max(
+            0.05, float(self.target_local_reveal_min_standoff))
+        self.target_local_reveal_known_ratio = min(
+            1.0, max(0.0, float(self.target_local_reveal_known_ratio)))
+        self.target_local_reveal_settle_time = max(
+            0.0, float(self.target_local_reveal_settle_time))
+        self.target_local_reveal_max_attempts = max(
+            1, int(self.target_local_reveal_max_attempts))
         self.mission_timeout = float(self.mission_timeout)
         self.free_threshold = int(self.free_threshold)
         self.occupied_threshold = int(self.occupied_threshold)
@@ -385,7 +422,8 @@ class RoadmapExploreMission(Node):
 
         if self.state in (
                 'FINAL_NAVIGATION', 'SEARCH_NAVIGATION',
-                'PROBE_NAVIGATION', 'BACKTRACK_NAVIGATION'):
+                'PROBE_NAVIGATION', 'BACKTRACK_NAVIGATION',
+                'TARGET_REVEAL_NAVIGATION'):
             if (self.state not in (
                     'PROBE_NAVIGATION', 'BACKTRACK_NAVIGATION') and
                     self.visual_parking_enabled and
@@ -399,6 +437,14 @@ class RoadmapExploreMission(Node):
             if (self.state == 'SEARCH_NAVIGATION' and
                     self._search_timed_out(now)):
                 self._cancel_active_nav('search_timeout')
+            return
+
+        if self.state == 'TARGET_REVEAL_SETTLE':
+            if self._try_target_reveal_tag_handoff(now):
+                return
+            if (now - self.target_reveal_settle_start_time >=
+                    self.target_local_reveal_settle_time):
+                self._evaluate_target_local_reveal()
             return
 
         if self.state == 'PROBE_SETTLE':
@@ -831,13 +877,18 @@ class RoadmapExploreMission(Node):
             self._abort_mission(
                 'Cannot start progressive probing: Roadmap goal handle is missing')
             return
+        self.pending_target_reveal = self._target_local_reveal_applicable()
         self.state = 'CANCELING_EXPLORATION_FOR_PROBE'
         future = self.explore_goal_handle.cancel_goal_async()
         future.add_done_callback(self._explore_cancel_done)
+        recovery = (
+            'a bounded target-local reveal'
+            if self.pending_target_reveal else
+            'breadcrumb backtracking or a short target-directed probe')
         self.get_logger().warning(
             'Roadmap exploration made no positional progress for '
             f'{self.exploration_stall_timeout:.1f}s; canceling it for '
-            'breadcrumb backtracking or a short target-directed probe')
+            f'{recovery}')
 
     def _try_exploration_tag_handoff(self, now: float) -> bool:
         """
@@ -904,12 +955,254 @@ class RoadmapExploreMission(Node):
             f'target distance {target_distance:.2f}m; canceling Roadmap and '
             'its Nav2 goal before visual parking handoff')
 
-    def _prepare_stall_recovery(self):
+    def _prepare_target_local_reveal(self):
+        if self.preparking_pose is None or self.target_pose is None:
+            self._prepare_stall_recovery(allow_target_reveal=False)
+            return
+        approach = self.preparking_pose.pose.position
+        target = self.target_pose.pose.position
+        generated = target_reveal_points(
+            (approach.x, approach.y), (target.x, target.y),
+            self.target_local_reveal_forward_offsets,
+            self.target_local_reveal_lateral_offsets,
+            self.target_local_reveal_min_standoff)
+        self.target_reveal_candidates = [
+            point for point in generated if self._safe_search_point(point)]
+        self.target_reveal_index = 0
+        self.target_reveal_plan_candidate = None
+        self.target_reveal_attempts = 0
+        self.get_logger().warning(
+            'Target handoff is blocked only by unknown clearance cells; '
+            f'target-local reveal generated {len(generated)} viewpoints and '
+            f'{len(self.target_reveal_candidates)} have known-free endpoints')
+        self._send_next_target_reveal_candidate()
+
+    def _send_next_target_reveal_candidate(self):
+        if (self.target_reveal_attempts >=
+                self.target_local_reveal_max_attempts):
+            self._finish_target_local_reveal(
+                'Target-local reveal attempt limit reached')
+            return
+        while self.target_reveal_index < len(
+                self.target_reveal_candidates):
+            index = self.target_reveal_index
+            point = self.target_reveal_candidates[index]
+            self.target_reveal_index += 1
+            robot = self._robot_pose()
+            yaw = robot[2] if robot is not None else 0.0
+            candidate = self._make_pose(point[0], point[1], yaw)
+            self.get_logger().info(
+                f'Checking target-local reveal viewpoint {index + 1}/'
+                f'{len(self.target_reveal_candidates)}: '
+                f'({point[0]:.2f}, {point[1]:.2f})')
+            self._request_target_reveal_plan(candidate)
+            return
+        self._finish_target_local_reveal(
+            'No target-local reveal viewpoint has a fully known Nav2 path')
+
+    def _request_target_reveal_plan(self, candidate: PoseStamped):
+        self.plan_in_progress = True
+        self.target_reveal_plan_candidate = candidate
+        self.state = 'PLANNING_TARGET_REVEAL'
+        goal = ComputePathToPose.Goal()
+        goal.goal = candidate
+        goal.planner_id = str(self.planner_id)
+        goal.use_start = False
+        future = self.plan_client.send_goal_async(goal)
+        future.add_done_callback(self._target_reveal_plan_goal_response)
+
+    def _target_reveal_plan_goal_response(self, future):
+        try:
+            goal_handle = future.result()
+        except Exception as exc:
+            self.plan_in_progress = False
+            self.get_logger().warning(
+                f'Target-local reveal planning request failed: {exc}')
+            self._send_next_target_reveal_candidate()
+            return
+        if self.state != 'PLANNING_TARGET_REVEAL':
+            if goal_handle.accepted:
+                goal_handle.cancel_goal_async()
+            self.plan_in_progress = False
+            return
+        if not goal_handle.accepted:
+            self.plan_in_progress = False
+            self.get_logger().warning(
+                'Nav2 rejected one target-local reveal plan request')
+            self._send_next_target_reveal_candidate()
+            return
+        goal_handle.get_result_async().add_done_callback(
+            self._target_reveal_plan_result)
+
+    def _target_reveal_plan_result(self, future):
+        self.plan_in_progress = False
+        if self.state != 'PLANNING_TARGET_REVEAL':
+            return
+        try:
+            wrapped = future.result()
+        except Exception as exc:
+            self.get_logger().warning(
+                f'Target-local reveal planning result failed: {exc}')
+            self._send_next_target_reveal_candidate()
+            return
+        if (wrapped.status != GoalStatus.STATUS_SUCCEEDED or
+                not wrapped.result.path.poses):
+            self.get_logger().warning(
+                'Target-local reveal viewpoint has no Nav2 path')
+            self._send_next_target_reveal_candidate()
+            return
+        known_ratio = self._known_path_ratio(
+            wrapped.result.path, sample_stride=1)
+        if known_ratio + 1e-9 < self.target_local_reveal_known_ratio:
+            self.get_logger().warning(
+                f'Target-local reveal path is only '
+                f'{known_ratio * 100.0:.0f}% known; trying another viewpoint')
+            self._send_next_target_reveal_candidate()
+            return
+        candidate = self.target_reveal_plan_candidate
+        if candidate is None:
+            self._abort_mission(
+                'Target-local reveal candidate pose is missing')
+            return
+        self.target_reveal_attempts += 1
+        self.get_logger().warning(
+            f'Dispatching target-local reveal '
+            f'{self.target_reveal_attempts}/'
+            f'{self.target_local_reveal_max_attempts}: '
+            f'({candidate.pose.position.x:.2f}, '
+            f'{candidate.pose.position.y:.2f}), '
+            f'path_known={known_ratio * 100.0:.0f}%')
+        self._send_nav_goal(candidate, 'reveal')
+
+    def _complete_target_local_reveal(self):
+        robot = self._robot_pose()
+        if robot is not None:
+            append_breadcrumb(
+                self.breadcrumbs, (robot[0], robot[1]),
+                self.breadcrumb_spacing, self.breadcrumb_max_points)
+        self.target_reveal_settle_start_time = self._now_seconds()
+        self.state = 'TARGET_REVEAL_SETTLE'
+        self.get_logger().info(
+            f'Target-local reveal viewpoint reached; waiting '
+            f'{self.target_local_reveal_settle_time:.1f}s for SLAM to '
+            'integrate fresh laser observations')
+
+    def _try_target_reveal_tag_handoff(self, now: float) -> bool:
+        robot = self._robot_pose()
+        if (robot is None or not self.visual_parking_enabled or
+                not self._inside_tag_handoff_region() or
+                not self._tag_confirmed(now)):
+            return False
+        self.final_candidate = self._make_pose(
+            robot[0], robot[1], robot[2])
+        self.get_logger().info(
+            'Target-local reveal exposed a complete Tag; transferring '
+            'to visual parking without another map handoff check')
+        self._start_tag_acquisition(after_search=False)
+        return True
+
+    def _evaluate_target_local_reveal(self):
+        if (self.visual_parking_enabled and
+                self._inside_tag_handoff_region() and
+                self.tag_stable_since is not None):
+            # A Tag may have appeared at the end of the settle interval. Give
+            # its configured confirmation window priority over moving again.
+            return
+
+        candidate = self._known_safe_target_pose()
+        if candidate is None:
+            self.get_logger().info(
+                'Fresh scan has not yet made the pre-parking clearance fully '
+                'known; trying the next bounded reveal viewpoint')
+            self._send_next_target_reveal_candidate()
+            return
+        self._request_target_reveal_handoff_plan(candidate)
+
+    def _request_target_reveal_handoff_plan(self, candidate: PoseStamped):
+        self.plan_in_progress = True
+        self.target_reveal_plan_candidate = candidate
+        self.state = 'PLANNING_TARGET_REVEAL_HANDOFF'
+        goal = ComputePathToPose.Goal()
+        goal.goal = candidate
+        goal.planner_id = str(self.planner_id)
+        goal.use_start = False
+        future = self.plan_client.send_goal_async(goal)
+        future.add_done_callback(
+            self._target_reveal_handoff_goal_response)
+
+    def _target_reveal_handoff_goal_response(self, future):
+        try:
+            goal_handle = future.result()
+        except Exception as exc:
+            self.plan_in_progress = False
+            self.get_logger().warning(
+                f'Post-reveal target path request failed: {exc}')
+            self._send_next_target_reveal_candidate()
+            return
+        if self.state != 'PLANNING_TARGET_REVEAL_HANDOFF':
+            if goal_handle.accepted:
+                goal_handle.cancel_goal_async()
+            self.plan_in_progress = False
+            return
+        if not goal_handle.accepted:
+            self.plan_in_progress = False
+            self.get_logger().warning(
+                'Nav2 rejected the post-reveal target path request')
+            self._send_next_target_reveal_candidate()
+            return
+        goal_handle.get_result_async().add_done_callback(
+            self._target_reveal_handoff_result)
+
+    def _target_reveal_handoff_result(self, future):
+        self.plan_in_progress = False
+        if self.state != 'PLANNING_TARGET_REVEAL_HANDOFF':
+            return
+        try:
+            wrapped = future.result()
+        except Exception as exc:
+            self.get_logger().warning(
+                f'Post-reveal target path result failed: {exc}')
+            self._send_next_target_reveal_candidate()
+            return
+        if (wrapped.status != GoalStatus.STATUS_SUCCEEDED or
+                not wrapped.result.path.poses):
+            self.get_logger().warning(
+                'No Nav2 path to the newly revealed pre-parking point')
+            self._send_next_target_reveal_candidate()
+            return
+        known_ratio = self._known_path_ratio(wrapped.result.path)
+        if known_ratio + 1e-9 < self.direct_path_known_ratio:
+            self.get_logger().warning(
+                f'Post-reveal target path is only '
+                f'{known_ratio * 100.0:.0f}% known; trying another viewpoint')
+            self._send_next_target_reveal_candidate()
+            return
+        self.final_candidate = wrapped.result.path.poses[-1]
+        self.get_logger().info(
+            f'Target-local reveal completed the handoff corridor '
+            f'({known_ratio * 100.0:.0f}% known); sending position-only '
+            'final Nav2 goal')
+        self._send_final_goal()
+
+    def _finish_target_local_reveal(self, reason: str):
+        self.target_reveal_plan_candidate = None
+        self.get_logger().warning(
+            f'{reason}; falling back to travelled-route recovery')
+        self._prepare_stall_recovery(allow_target_reveal=False)
+
+    def _prepare_stall_recovery(self, allow_target_reveal: bool = True):
         robot = self._robot_pose()
         if robot is None:
             self._abort_mission(
                 'Cannot recover from exploration stall without robot pose')
             return
+
+        if (allow_target_reveal and self.pending_target_reveal and
+                self.target_local_reveal_enabled):
+            self.pending_target_reveal = False
+            self._prepare_target_local_reveal()
+            return
+        self.pending_target_reveal = False
 
         if (self.deadend_backtrack_enabled and
                 self.backtrack_recoveries <
@@ -1272,6 +1565,7 @@ class RoadmapExploreMission(Node):
             'search': 'SENDING_SEARCH_NAVIGATION',
             'probe': 'SENDING_PROBE_NAVIGATION',
             'backtrack': 'SENDING_BACKTRACK_NAVIGATION',
+            'reveal': 'SENDING_TARGET_REVEAL_NAVIGATION',
         }
         if purpose not in sending_states:
             self._abort_mission(f'Unknown Nav2 mission purpose: {purpose}')
@@ -1331,6 +1625,14 @@ class RoadmapExploreMission(Node):
                 self.active_nav_purpose = None
                 self.backtrack_target = None
                 self._send_next_backtrack_candidate()
+            elif self.active_nav_purpose == 'reveal':
+                self.get_logger().warning(
+                    'Nav2 rejected one target-local reveal goal; trying '
+                    'another known-safe viewpoint')
+                self.final_goal_handle = None
+                self.active_nav_target = None
+                self.active_nav_purpose = None
+                self._send_next_target_reveal_candidate()
             else:
                 self._abort_mission('Nav2 rejected the pre-parking goal')
             return
@@ -1344,6 +1646,7 @@ class RoadmapExploreMission(Node):
             'search': 'SEARCH_NAVIGATION',
             'probe': 'PROBE_NAVIGATION',
             'backtrack': 'BACKTRACK_NAVIGATION',
+            'reveal': 'TARGET_REVEAL_NAVIGATION',
         }
         self.state = active_states[purpose]
         self.get_logger().info(
@@ -1443,6 +1746,26 @@ class RoadmapExploreMission(Node):
                     f'{status}; trying another older known-safe point')
                 self.backtrack_target = None
                 self._send_next_backtrack_candidate()
+            return
+
+        if purpose == 'reveal':
+            if cancel_reason == 'tag_confirmed':
+                robot = self._robot_pose()
+                if robot is None:
+                    self._abort_mission(
+                        'Cannot anchor visual handoff after target reveal')
+                    return
+                self.final_candidate = self._make_pose(
+                    robot[0], robot[1], robot[2])
+                self._start_tag_acquisition(after_search=False)
+            elif (status == GoalStatus.STATUS_SUCCEEDED or
+                  cancel_reason == 'position_reached'):
+                self._complete_target_local_reveal()
+            else:
+                self.get_logger().warning(
+                    f'Target-local reveal Nav2 goal failed with status '
+                    f'{status}; trying another known-safe viewpoint')
+                self._send_next_target_reveal_candidate()
             return
 
         self._abort_mission('Received a Nav2 result with no mission purpose')
@@ -1654,6 +1977,46 @@ class RoadmapExploreMission(Node):
         else:
             self._abort_mission('Return-to-start navigation failed')
 
+    def _target_local_reveal_applicable(self) -> bool:
+        """
+        Identify the narrow case where local sensing can unlock handoff.
+
+        The target and robot-to-target corridor must already be known free.
+        The nominal pre-parking endpoint may fail only because its clearance
+        disk contains unknown cells; any occupied cell keeps normal
+        travelled-route recovery in control.
+        """
+        if (not self.target_local_reveal_enabled or
+                self.latest_map is None or
+                self.target_pose is None or
+                self.preparking_pose is None):
+            return False
+        robot = self._robot_pose()
+        if robot is None:
+            return False
+
+        msg = self.latest_map
+        target = self.target_pose.pose.position
+        approach = self.preparking_pose.pose.position
+        robot_cell = self._world_to_map(msg, robot[0], robot[1])
+        target_cell = self._world_to_map(msg, target.x, target.y)
+        approach_cell = self._world_to_map(msg, approach.x, approach.y)
+        if robot_cell is None or target_cell is None or approach_cell is None:
+            return False
+        if (not self._is_free(msg, robot_cell[0], robot_cell[1]) or
+                not self._is_free(msg, target_cell[0], target_cell[1]) or
+                not self._is_free(msg, approach_cell[0], approach_cell[1])):
+            return False
+        if self._clearance_status(msg, target_cell) != 'safe':
+            return False
+        if self._clearance_status(msg, approach_cell) != 'unknown':
+            return False
+        if not self._known_free_line(msg, approach_cell, target_cell):
+            return False
+        if not self._known_free_line(msg, robot_cell, target_cell):
+            return False
+        return True
+
     def _known_safe_target_pose(self) -> Optional[PoseStamped]:
         if (self.latest_map is None or self.target_pose is None or
                 self.preparking_pose is None):
@@ -1719,15 +2082,22 @@ class RoadmapExploreMission(Node):
                 y0 += step_y
 
     def _safe_endpoint(self, msg: OccupancyGrid, cell: Cell) -> bool:
+        return self._clearance_status(msg, cell) == 'safe'
+
+    def _clearance_status(self, msg: OccupancyGrid, cell: Cell) -> str:
+        """Return ``safe``, ``unknown`` or ``occupied`` for a clearance disk."""
         radius = max(1, math.ceil(self.endpoint_clearance / msg.info.resolution))
+        unknown = False
         for mx in range(cell[0] - radius, cell[0] + radius + 1):
             for my in range(cell[1] - radius, cell[1] + radius + 1):
                 if (mx - cell[0]) ** 2 + (my - cell[1]) ** 2 > radius ** 2:
                     continue
                 value = self._cell_value(msg, mx, my)
-                if value is None or value < 0 or value >= self.occupied_threshold:
-                    return False
-        return True
+                if value is not None and value >= self.occupied_threshold:
+                    return 'occupied'
+                if value is None or value < 0:
+                    unknown = True
+        return 'unknown' if unknown else 'safe'
 
     def _known_path_ratio(self, path: Path, sample_stride: int = 2) -> float:
         if self.latest_map is None or not path.poses:

@@ -155,6 +155,54 @@ def progressive_probe_points(
     return points
 
 
+def target_reveal_points(
+        preparking: Point, target: Point,
+        forward_offsets: Sequence[float],
+        lateral_offsets: Sequence[float],
+        min_target_standoff: float) -> List[Point]:
+    """
+    Generate bounded viewpoints that can reveal cells near pre-parking.
+
+    Candidates advance from the nominal pre-parking point toward the target,
+    while retaining a minimum target standoff. All centerline advances are
+    tried before lateral alternatives. Occupancy, clearance and Nav2 path
+    checks remain the mission node's responsibility.
+    """
+    dx = target[0] - preparking[0]
+    dy = target[1] - preparking[1]
+    distance = math.hypot(dx, dy)
+    if distance <= 1e-9:
+        return []
+
+    forward = (dx / distance, dy / distance)
+    left = (-forward[1], forward[0])
+    maximum_advance = max(
+        0.0, distance - max(0.0, float(min_target_standoff)))
+    offsets = sorted({
+        min(max(0.0, float(value)), maximum_advance)
+        for value in forward_offsets
+        if float(value) > 1e-9
+    })
+    lateral = sorted(
+        {float(value) for value in lateral_offsets},
+        key=lambda value: (abs(value), value < 0.0))
+
+    points: List[Point] = []
+    for side in lateral:
+        for advance in offsets:
+            if advance <= 1e-9:
+                continue
+            point = (
+                preparking[0] + advance * forward[0] + side * left[0],
+                preparking[1] + advance * forward[1] + side * left[1],
+            )
+            if not any(
+                    math.hypot(point[0] - other[0], point[1] - other[1])
+                    <= 1e-9 for other in points):
+                points.append(point)
+    return points
+
+
 def position_reached(robot: Point, goal: Point, tolerance: float) -> bool:
     """Position-only arrival check; intentionally has no heading input."""
     return math.hypot(robot[0] - goal[0], robot[1] - goal[1]) <= tolerance

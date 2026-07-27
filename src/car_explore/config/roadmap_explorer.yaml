@@ -194,6 +194,16 @@ roadmap_explore_mission:
     progressive_probe_settle_time: 1.0
     progressive_probe_max_attempts: 6
     progressive_probe_max_failures: 3
+    # 目标与当前车位之间已完全可通行、且预泊车净空只差少量未知栅格时，
+    # 先沿目标方向移动到已知安全观察点，让激光补扫目标局部；若检测到任何已知障碍，
+    # 或补扫路径不是100%已知，则不启用此捷径，仍按面包屑退出/普通探索处理。
+    target_local_reveal_enabled: true
+    target_local_reveal_forward_offsets: [0.10, 0.15, 0.20]
+    target_local_reveal_lateral_offsets: [0.0, 0.08, -0.08]
+    target_local_reveal_min_standoff: 0.12
+    target_local_reveal_known_ratio: 1.0
+    target_local_reveal_settle_time: 1.5
+    target_local_reveal_max_attempts: 3
     mission_timeout: 300.0
     free_threshold: 20
     occupied_threshold: 65

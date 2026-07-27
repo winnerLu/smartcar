@@ -54,6 +54,12 @@ def generate_launch_description():
         'progressive_probe_min_step')
     progressive_probe_max_attempts = LaunchConfiguration(
         'progressive_probe_max_attempts')
+    target_local_reveal_enabled = LaunchConfiguration(
+        'target_local_reveal_enabled')
+    target_local_reveal_settle_time = LaunchConfiguration(
+        'target_local_reveal_settle_time')
+    target_local_reveal_max_attempts = LaunchConfiguration(
+        'target_local_reveal_max_attempts')
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -132,6 +138,15 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'progressive_probe_max_attempts', default_value='6',
             description='整次任务最多发送的渐进探测次数'),
+        DeclareLaunchArgument(
+            'target_local_reveal_enabled', default_value='true',
+            description='目标附近仅剩未知净空时优先执行有界局部补扫'),
+        DeclareLaunchArgument(
+            'target_local_reveal_settle_time', default_value='1.5',
+            description='到达局部补扫观察点后等待SLAM更新的时间(s)'),
+        DeclareLaunchArgument(
+            'target_local_reveal_max_attempts', default_value='3',
+            description='一次停滞恢复最多执行的目标局部补扫次数'),
         DeclareLaunchArgument('return_to_start', default_value='false'),
         DeclareLaunchArgument('start_delay', default_value='5.0'),
 
@@ -231,6 +246,12 @@ def generate_launch_description():
                         progressive_probe_min_step, value_type=float),
                     'progressive_probe_max_attempts': ParameterValue(
                         progressive_probe_max_attempts, value_type=int),
+                    'target_local_reveal_enabled': ParameterValue(
+                        target_local_reveal_enabled, value_type=bool),
+                    'target_local_reveal_settle_time': ParameterValue(
+                        target_local_reveal_settle_time, value_type=float),
+                    'target_local_reveal_max_attempts': ParameterValue(
+                        target_local_reveal_max_attempts, value_type=int),
                 },
             ],
         ),
