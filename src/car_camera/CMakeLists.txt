@@ -13,6 +13,7 @@ find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(cv_bridge REQUIRED)
 find_package(camera_info_manager REQUIRED)
@@ -26,7 +27,7 @@ endif()
 
 add_executable(car_camera_node src/car_camera_node.cpp)
 ament_target_dependencies(car_camera_node
-  rclcpp sensor_msgs cv_bridge camera_info_manager)
+  rclcpp sensor_msgs std_srvs cv_bridge camera_info_manager)
 target_link_libraries(car_camera_node ${OpenCV_LIBS})
 
 add_executable(apriltag_detector_node src/apriltag_detector_node.cpp)
@@ -57,6 +58,9 @@ if(BUILD_TESTING)
     TIMEOUT 20)
   ament_add_pytest_test(tag_board_assets
     test/test_tag_board_assets.py
+    TIMEOUT 10)
+  ament_add_pytest_test(camera_capture_gate
+    test/test_camera_capture_gate.py
     TIMEOUT 10)
   set(ament_cmake_copyright_FOUND TRUE)
   set(ament_cmake_cpplint_FOUND TRUE)

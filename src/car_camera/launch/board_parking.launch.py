@@ -19,6 +19,9 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument('video_device', default_value='/dev/camera_c270'),
         DeclareLaunchArgument(
+            'camera_enabled', default_value='true',
+            description='Open and capture from the camera immediately'),
+        DeclareLaunchArgument(
             'camera_info_url',
             default_value='package://car_camera/config/c270_calibration.yaml'),
         # Current print measured 48.5 mm instead of the intended 50 mm.  The
@@ -66,6 +69,8 @@ def generate_launch_description():
                 'video_device': LaunchConfiguration('video_device'),
                 'camera_name': 'logitech_c270',
                 'camera_info_url': LaunchConfiguration('camera_info_url'),
+                'enabled': ParameterValue(
+                    LaunchConfiguration('camera_enabled'), value_type=bool),
             }]),
         Node(
             package='car_camera', executable='apriltag_detector_node',

@@ -9,6 +9,8 @@ camera:
     image_width: 640
     image_height: 480
     framerate: 30
+    # 独立启动时默认采集；目标导向任务会在预泊车交接前覆盖为 false。
+    enabled: true
     # C270 高帧率靠 MJPG;YUYV 在高分辨率下 USB2 带宽不足会掉帧
     pixel_format: mjpg
     camera_name: logitech_c270

@@ -26,8 +26,8 @@ from roadmap_handoff import (
     append_breadcrumb,
     bounded_search_points,
     breadcrumb_backtrack_points,
+    path_standoff_point,
     position_reached,
-    preparking_point,
     progressive_probe_points,
     tag_observation_valid,
     target_reveal_points,
@@ -80,6 +80,8 @@ class RoadmapExploreMission(Node):
         self.nav_client = ActionClient(self, NavigateToPose, 'navigate_to_pose')
         self.parking_client = self.create_client(
             SetBool, self.parking_enable_service)
+        self.camera_client = self.create_client(
+            SetBool, self.camera_capture_service)
 
         self.latest_map: Optional[OccupancyGrid] = None
         self.start_pose: Optional[PoseStamped] = None
@@ -104,6 +106,12 @@ class RoadmapExploreMission(Node):
         self.parking_complete = False
         self.parking_reset_requested = False
         self.parking_reset_complete = not self.visual_parking_enabled
+        self.camera_reset_requested = False
+        self.camera_reset_complete = not self.visual_parking_enabled
+        self.camera_capture_enabled = False
+        self.camera_activation_in_progress = False
+        self.camera_handoff_pending = False
+        self.pending_acquisition_after_search = False
         self.tag_visible_count = 0
         self.tag_reprojection_error = math.inf
         self.tag_inlier_count = 0
@@ -158,7 +166,6 @@ class RoadmapExploreMission(Node):
             'goal_radius': 0.25,
             'visual_parking_enabled': True,
             'preparking_distance': 0.35,
-            'preparking_candidate_radius': 0.08,
             'position_arrival_tolerance': 0.06,
             'position_only_bt_xml': '',
             'tag_pose_topic': '/apriltag_detector/tag_pose',
@@ -167,6 +174,8 @@ class RoadmapExploreMission(Node):
             'tag_inlier_topic': '/apriltag_detector/inlier_count',
             'parking_complete_topic': '/board_parker/parking_complete',
             'parking_enable_service': '/board_parker/set_enabled',
+            'camera_capture_service': '/camera/set_enabled',
+            'camera_warmup_target_distance': 1.0,
             'tag_max_age': 0.40,
             'tag_confirm_time': 0.50,
             'tag_max_reprojection_error': 3.0,
@@ -221,11 +230,13 @@ class RoadmapExploreMission(Node):
                 'start_delay', 'return_to_start', 'goal_directed_mode',
                 'goal_forward', 'goal_left', 'goal_radius',
                 'visual_parking_enabled', 'preparking_distance',
-                'preparking_candidate_radius', 'position_arrival_tolerance',
+                'position_arrival_tolerance',
                 'position_only_bt_xml',
                 'tag_pose_topic', 'tag_count_topic', 'tag_error_topic',
                 'tag_inlier_topic', 'parking_complete_topic',
-                'parking_enable_service', 'tag_max_age', 'tag_confirm_time',
+                'parking_enable_service', 'camera_capture_service',
+                'camera_warmup_target_distance',
+                'tag_max_age', 'tag_confirm_time',
                 'tag_max_reprojection_error', 'tag_min_inlier_points',
                 'tag_acquire_timeout', 'tag_handoff_max_target_distance',
                 'search_forward_step', 'search_lateral_step',
@@ -268,8 +279,6 @@ class RoadmapExploreMission(Node):
         self.visual_parking_enabled = bool(self.visual_parking_enabled)
         self.preparking_distance = max(
             0.0, float(self.preparking_distance))
-        self.preparking_candidate_radius = max(
-            0.0, float(self.preparking_candidate_radius))
         self.position_arrival_tolerance = max(
             0.01, float(self.position_arrival_tolerance))
         if not self.position_only_bt_xml:
@@ -290,6 +299,9 @@ class RoadmapExploreMission(Node):
             0.0, float(self.tag_acquire_timeout))
         self.tag_handoff_max_target_distance = max(
             0.05, float(self.tag_handoff_max_target_distance))
+        self.camera_warmup_target_distance = max(
+            self.tag_handoff_max_target_distance,
+            float(self.camera_warmup_target_distance))
         self.search_forward_step = min(
             abs(float(self.search_forward_step)), self.goal_radius)
         self.search_lateral_step = min(
@@ -395,6 +407,8 @@ class RoadmapExploreMission(Node):
             self._abort_mission('Mission timeout reached before the target became reachable')
             return
 
+        self._maybe_warm_camera_near_target()
+
         if self.state == 'EXPLORING':
             # A complete Tag near the mission target is stronger arrival
             # evidence than the SLAM endpoint-clearance test. In particular,
@@ -415,9 +429,8 @@ class RoadmapExploreMission(Node):
                     now < self.next_direct_check_time):
                 return
             self.next_direct_check_time = now + self.direct_check_period
-            candidate = self._known_safe_target_pose()
-            if candidate is not None:
-                self._request_direct_path(candidate)
+            if self._target_is_known_free():
+                self._request_direct_path()
             return
 
         if self.state in (
@@ -476,6 +489,7 @@ class RoadmapExploreMission(Node):
         if self.state == 'VISUAL_PARKING':
             if self.parking_complete:
                 self._set_parking_enabled(False)
+                self._set_camera_capture_enabled(False)
                 self.state = 'COMPLETE'
                 self.get_logger().info(
                     'Goal-directed mission complete: visual parking confirmed')
@@ -494,9 +508,10 @@ class RoadmapExploreMission(Node):
                 not self.nav_client.server_is_ready() or
                 (self.goal_directed_mode and not self.plan_client.server_is_ready()) or
                 (self.goal_directed_mode and self.visual_parking_enabled and
-                 not self.parking_client.service_is_ready())):
+                 (not self.parking_client.service_is_ready() or
+                  not self.camera_client.service_is_ready()))):
             self._log_waiting(
-                'Waiting for Roadmap Explorer, Nav2, and visual parking interfaces')
+                'Waiting for Roadmap Explorer, Nav2, camera, and visual parking interfaces')
             return
         if (self.goal_directed_mode and self.visual_parking_enabled and
                 not self.parking_reset_complete):
@@ -509,6 +524,17 @@ class RoadmapExploreMission(Node):
             self._log_waiting(
                 'Waiting for visual parking to release velocity ownership')
             return
+        if (self.goal_directed_mode and self.visual_parking_enabled and
+                not self.camera_reset_complete):
+            if not self.camera_reset_requested:
+                self.camera_reset_requested = True
+                request = SetBool.Request()
+                request.data = False
+                future = self.camera_client.call_async(request)
+                future.add_done_callback(self._camera_reset_done)
+            self._log_waiting(
+                'Waiting for camera capture to enter exploration sleep mode')
+            return
 
         robot = self._robot_pose()
         if robot is None:
@@ -518,22 +544,22 @@ class RoadmapExploreMission(Node):
         goal_x = x + math.cos(yaw) * self.goal_forward - math.sin(yaw) * self.goal_left
         goal_y = y + math.sin(yaw) * self.goal_forward + math.cos(yaw) * self.goal_left
         self.target_pose = self._make_pose(goal_x, goal_y, yaw)
-        approach_x, approach_y, approach_yaw = preparking_point(
-            (x, y), (goal_x, goal_y), self.preparking_distance)
-        self.preparking_pose = self._make_pose(
-            approach_x, approach_y, approach_yaw)
+        # The approach direction is not known at mission start.  It may be a
+        # detour around walls, so derive the pre-parking pose later from the
+        # tail of an actually reachable Nav2 path to the target.
+        self.preparking_pose = None
         self.breadcrumbs = []
         append_breadcrumb(
             self.breadcrumbs, (x, y),
             self.breadcrumb_spacing, self.breadcrumb_max_points)
         self.target_pub.publish(self.target_pose)
-        self.preparking_pub.publish(self.preparking_pose)
         self.mission_start_time = now
         self.get_logger().info(
             f'Recorded start pose ({x:.2f}, {y:.2f}, yaw={math.degrees(yaw):.1f}deg); '
             f'Roadmap target=({goal_x:.2f}, {goal_y:.2f}), '
-            f'pre-parking=({approach_x:.2f}, {approach_y:.2f}), '
             f'relative=({self.goal_forward:.2f}m forward, {self.goal_left:.2f}m left). '
+            f'The {self.preparking_distance:.2f}m pre-parking standoff will '
+            'be measured backward along a reachable Nav2 path. '
             'Final Nav2 arrival uses XY position only; yaw is not a completion condition.')
 
         if self.goal_directed_mode:
@@ -542,27 +568,26 @@ class RoadmapExploreMission(Node):
             self._send_exploration_goal(new_session=True)
 
     def _check_initial_direct_path(self):
-        """Skip Roadmap when Nav2 already has a safe known pre-parking path."""
-        candidate = self._known_safe_target_pose()
-        if candidate is None:
+        """Skip Roadmap when a path-derived pre-parking pose is already safe."""
+        if not self._target_is_known_free():
             self.get_logger().info(
-                'Initial pre-parking point is not known-safe; starting '
-                'Roadmap exploration')
+                'Initial target cell is not known-free; starting Roadmap '
+                'exploration before deriving a pre-parking pose')
             self._send_exploration_goal(new_session=True)
             return
 
-        self.initial_plan_candidate = candidate
+        self.initial_plan_candidate = self.target_pose
         self.plan_in_progress = True
         self.state = 'CHECKING_INITIAL_PATH'
         goal = ComputePathToPose.Goal()
-        goal.goal = candidate
+        goal.goal = self.target_pose
         goal.planner_id = str(self.planner_id)
         goal.use_start = False
         future = self.plan_client.send_goal_async(goal)
         future.add_done_callback(self._initial_plan_goal_response)
         self.get_logger().info(
-            'Checking whether the initial pre-parking path is already '
-            'known and safe before starting Roadmap')
+            'Checking for an initial path to the target so pre-parking can '
+            'be derived from its reachable approach')
 
     def _initial_plan_goal_response(self, future):
         try:
@@ -602,22 +627,31 @@ class RoadmapExploreMission(Node):
         if (wrapped.status == GoalStatus.STATUS_SUCCEEDED and
                 wrapped.result.path.poses):
             known_ratio = self._known_path_ratio(wrapped.result.path)
-            if known_ratio >= self.direct_path_known_ratio:
-                self.final_candidate = wrapped.result.path.poses[-1]
+            candidate, reason = self._dynamic_preparking_from_path(
+                wrapped.result.path)
+            if (known_ratio >= self.direct_path_known_ratio and
+                    candidate is not None):
+                self.final_candidate = candidate
                 self.initial_plan_candidate = None
                 self.get_logger().info(
-                    f'Initial pre-parking path is '
+                    f'Initial target path is '
                     f'{known_ratio * 100.0:.0f}% known; skipping Roadmap '
-                    'and starting position-only Nav2 navigation')
+                    'and navigating to its path-derived pre-parking pose')
                 self._send_final_goal()
                 return
-            self.get_logger().info(
-                f'Initial pre-parking path is only '
-                f'{known_ratio * 100.0:.0f}% known; Roadmap exploration '
-                'is required')
+            if known_ratio < self.direct_path_known_ratio:
+                self.get_logger().info(
+                    f'Initial target path is only '
+                    f'{known_ratio * 100.0:.0f}% known; Roadmap exploration '
+                    'is required')
+            else:
+                self.get_logger().info(
+                    f'Initial target path cannot provide a safe dynamic '
+                    f'pre-parking pose: {reason}; Roadmap exploration is '
+                    'required')
         else:
             self.get_logger().info(
-                'No initial Nav2 path to the pre-parking point; Roadmap '
+                'No initial Nav2 path to the target; Roadmap '
                 'exploration is required')
         self._fallback_to_initial_exploration()
 
@@ -660,6 +694,56 @@ class RoadmapExploreMission(Node):
         self.parking_reset_complete = True
         self.get_logger().info(
             'Visual parking is inactive; Nav2 owns velocity during exploration')
+
+    def _camera_reset_done(self, future):
+        try:
+            response = future.result()
+        except Exception as exc:
+            self._abort_mission(
+                f'Could not disable camera capture before exploration: {exc}')
+            return
+        if not response.success:
+            self._abort_mission(
+                f'Camera capture did not enter sleep mode: {response.message}')
+            return
+        self.camera_capture_enabled = False
+        self.camera_reset_complete = True
+        self.get_logger().info(
+            'Camera capture is asleep during Roadmap exploration')
+
+    def _maybe_warm_camera_near_target(self):
+        if (not self.visual_parking_enabled or
+                self.camera_capture_enabled or
+                self.camera_activation_in_progress or
+                self.target_pose is None or
+                self.state in (
+                    'STARTING', 'COMPLETE', 'FAILED',
+                    'ACTIVATING_CAMERA', 'VISUAL_PARKING')):
+            return
+        robot = self._robot_pose()
+        if robot is None:
+            return
+        target = self.target_pose.pose.position
+        distance = math.hypot(robot[0] - target.x, robot[1] - target.y)
+        if distance > self.camera_warmup_target_distance:
+            return
+        self.get_logger().info(
+            f'Entered camera warm-up region ({distance:.2f}m <= '
+            f'{self.camera_warmup_target_distance:.2f}m); '
+            'opening camera while navigation continues')
+        self._request_camera_activation()
+
+    def _request_camera_activation(self):
+        if self.camera_capture_enabled or self.camera_activation_in_progress:
+            return
+        if not self.camera_client.service_is_ready():
+            self._abort_mission('Camera capture enable service is unavailable')
+            return
+        self.camera_activation_in_progress = True
+        request = SetBool.Request()
+        request.data = True
+        future = self.camera_client.call_async(request)
+        future.add_done_callback(self._camera_enable_done)
 
     def _explore_goal_response(self, future):
         try:
@@ -751,10 +835,12 @@ class RoadmapExploreMission(Node):
             self.state = 'COMPLETE'
             self.get_logger().info('Roadmap full exploration complete')
 
-    def _request_direct_path(self, candidate: PoseStamped):
+    def _request_direct_path(self):
+        if self.target_pose is None:
+            return
         self.plan_in_progress = True
         goal = ComputePathToPose.Goal()
-        goal.goal = candidate
+        goal.goal = self.target_pose
         goal.planner_id = str(self.planner_id)
         goal.use_start = False
         future = self.plan_client.send_goal_async(goal)
@@ -796,10 +882,18 @@ class RoadmapExploreMission(Node):
                 'Roadmap exploration continues')
             return
 
-        self.final_candidate = wrapped.result.path.poses[-1]
+        candidate, reason = self._dynamic_preparking_from_path(
+            wrapped.result.path)
+        if candidate is None:
+            self.get_logger().info(
+                f'Target path cannot yet provide a safe dynamic pre-parking '
+                f'pose: {reason}; Roadmap exploration continues')
+            return
+
+        self.final_candidate = candidate
         self.get_logger().info(
-            f'Pre-parking point has a safe path with '
-            f'{known_ratio * 100.0:.0f}% known cells; canceling Roadmap '
+            f'Target path has {known_ratio * 100.0:.0f}% known cells and '
+            f'a safe path-derived pre-parking pose; canceling Roadmap '
             'exploration and switching to position-only final Nav2 navigation')
         self._cancel_exploration_for_final_goal()
 
@@ -1109,21 +1203,24 @@ class RoadmapExploreMission(Node):
             # its configured confirmation window priority over moving again.
             return
 
-        candidate = self._known_safe_target_pose()
-        if candidate is None:
+        if not self._target_is_known_free():
             self.get_logger().info(
-                'Fresh scan has not yet made the pre-parking clearance fully '
-                'known; trying the next bounded reveal viewpoint')
+                'Fresh scan has not yet made the target cell known-free; '
+                'trying the next bounded reveal viewpoint')
             self._send_next_target_reveal_candidate()
             return
-        self._request_target_reveal_handoff_plan(candidate)
+        self._request_target_reveal_handoff_plan()
 
-    def _request_target_reveal_handoff_plan(self, candidate: PoseStamped):
+    def _request_target_reveal_handoff_plan(self):
+        if self.target_pose is None:
+            self._finish_target_local_reveal(
+                'Cannot re-plan target-local handoff without a target pose')
+            return
         self.plan_in_progress = True
-        self.target_reveal_plan_candidate = candidate
+        self.target_reveal_plan_candidate = self.target_pose
         self.state = 'PLANNING_TARGET_REVEAL_HANDOFF'
         goal = ComputePathToPose.Goal()
-        goal.goal = candidate
+        goal.goal = self.target_pose
         goal.planner_id = str(self.planner_id)
         goal.use_start = False
         future = self.plan_client.send_goal_async(goal)
@@ -1167,7 +1264,7 @@ class RoadmapExploreMission(Node):
         if (wrapped.status != GoalStatus.STATUS_SUCCEEDED or
                 not wrapped.result.path.poses):
             self.get_logger().warning(
-                'No Nav2 path to the newly revealed pre-parking point')
+                'No Nav2 path to the target after local reveal')
             self._send_next_target_reveal_candidate()
             return
         known_ratio = self._known_path_ratio(wrapped.result.path)
@@ -1177,11 +1274,19 @@ class RoadmapExploreMission(Node):
                 f'{known_ratio * 100.0:.0f}% known; trying another viewpoint')
             self._send_next_target_reveal_candidate()
             return
-        self.final_candidate = wrapped.result.path.poses[-1]
+        candidate, reason = self._dynamic_preparking_from_path(
+            wrapped.result.path)
+        if candidate is None:
+            self.get_logger().warning(
+                f'Post-reveal target path still has no safe dynamic '
+                f'pre-parking pose: {reason}')
+            self._send_next_target_reveal_candidate()
+            return
+        self.final_candidate = candidate
         self.get_logger().info(
             f'Target-local reveal completed the handoff corridor '
             f'({known_ratio * 100.0:.0f}% known); sending position-only '
-            'final Nav2 goal')
+            'final Nav2 goal to the path-derived pre-parking pose')
         self._send_final_goal()
 
     def _finish_target_local_reveal(self, reason: str):
@@ -1331,12 +1436,13 @@ class RoadmapExploreMission(Node):
 
     def _prepare_progressive_probe(self):
         robot = self._robot_pose()
-        if robot is None or self.preparking_pose is None:
+        destination_pose = self.preparking_pose or self.target_pose
+        if robot is None or destination_pose is None:
             self._abort_mission(
                 'Cannot generate a progressive probe without robot and '
-                'pre-parking poses')
+                'target poses')
             return
-        destination = self.preparking_pose.pose.position
+        destination = destination_pose.pose.position
         origin = (robot[0], robot[1])
         target = (destination.x, destination.y)
         self.probe_start_target_distance = math.hypot(
@@ -1471,11 +1577,12 @@ class RoadmapExploreMission(Node):
 
     def _complete_progressive_probe(self):
         robot = self._robot_pose()
-        if robot is None or self.preparking_pose is None:
+        destination_pose = self.preparking_pose or self.target_pose
+        if robot is None or destination_pose is None:
             self._abort_mission(
                 'Cannot measure progress after target-directed probing')
             return
-        target = self.preparking_pose.pose.position
+        target = destination_pose.pose.position
         remaining = math.hypot(target.x - robot[0], target.y - robot[1])
         progress = self.probe_start_target_distance - remaining
         if progress + 1e-9 < self.progressive_probe_min_progress:
@@ -1829,6 +1936,47 @@ class RoadmapExploreMission(Node):
             self.tag_handoff_max_target_distance)
 
     def _start_tag_acquisition(self, after_search: bool):
+        self.pending_acquisition_after_search = after_search
+        self.camera_handoff_pending = True
+        if self.camera_capture_enabled:
+            self.camera_handoff_pending = False
+            self._begin_tag_acquisition(after_search)
+            return
+        self.state = 'ACTIVATING_CAMERA'
+        if self.camera_activation_in_progress:
+            self.get_logger().info(
+                'Nav2 is stopped at visual handoff; waiting for camera warm-up to finish')
+            return
+
+        self.get_logger().info(
+            'Nav2 is stopped at visual handoff; opening camera for Tag acquisition')
+        self._request_camera_activation()
+
+    def _camera_enable_done(self, future):
+        self.camera_activation_in_progress = False
+        try:
+            response = future.result()
+        except Exception as exc:
+            self._abort_mission(f'Camera activation failed: {exc}')
+            return
+        if self.state == 'FAILED':
+            if response.success:
+                self._set_camera_capture_enabled(False)
+            return
+        if not response.success:
+            self._abort_mission(
+                f'Camera refused activation: {response.message}')
+            return
+        self.camera_capture_enabled = True
+        if self.camera_handoff_pending:
+            self.camera_handoff_pending = False
+            self._begin_tag_acquisition(self.pending_acquisition_after_search)
+        else:
+            self.get_logger().info(
+                'Camera warm-up complete; navigation continues while '
+                'AprilTag handoff evidence is monitored')
+
+    def _begin_tag_acquisition(self, after_search: bool):
         self.state = 'TAG_ACQUISITION'
         self.acquisition_start_time = self._now_seconds()
         self.acquisition_after_search = after_search
@@ -1952,6 +2100,17 @@ class RoadmapExploreMission(Node):
         request.data = enabled
         return self.parking_client.call_async(request)
 
+    def _set_camera_capture_enabled(self, enabled: bool):
+        if not self.camera_client.service_is_ready():
+            return None
+        if not enabled:
+            self.camera_capture_enabled = False
+            self.camera_activation_in_progress = False
+            self.camera_handoff_pending = False
+        request = SetBool.Request()
+        request.data = enabled
+        return self.camera_client.call_async(request)
+
     def _send_return_goal(self):
         if self.start_pose is None:
             self._abort_mission('Cannot return: start pose is missing')
@@ -1981,30 +2140,26 @@ class RoadmapExploreMission(Node):
         """
         Identify the narrow case where local sensing can unlock handoff.
 
-        The target and robot-to-target corridor must already be known free.
-        The nominal pre-parking endpoint may fail only because its clearance
-        disk contains unknown cells; any occupied cell keeps normal
-        travelled-route recovery in control.
+        The target and the final tail of a reachable path are already known
+        free when ``preparking_pose`` is derived.  Local reveal is allowed
+        only when that dynamic endpoint fails because its clearance disk
+        contains unknown cells; an occupied cell keeps normal travelled-route
+        recovery in control.
         """
         if (not self.target_local_reveal_enabled or
                 self.latest_map is None or
                 self.target_pose is None or
                 self.preparking_pose is None):
             return False
-        robot = self._robot_pose()
-        if robot is None:
-            return False
 
         msg = self.latest_map
         target = self.target_pose.pose.position
         approach = self.preparking_pose.pose.position
-        robot_cell = self._world_to_map(msg, robot[0], robot[1])
         target_cell = self._world_to_map(msg, target.x, target.y)
         approach_cell = self._world_to_map(msg, approach.x, approach.y)
-        if robot_cell is None or target_cell is None or approach_cell is None:
+        if target_cell is None or approach_cell is None:
             return False
-        if (not self._is_free(msg, robot_cell[0], robot_cell[1]) or
-                not self._is_free(msg, target_cell[0], target_cell[1]) or
+        if (not self._is_free(msg, target_cell[0], target_cell[1]) or
                 not self._is_free(msg, approach_cell[0], approach_cell[1])):
             return False
         if self._clearance_status(msg, target_cell) != 'safe':
@@ -2013,50 +2168,109 @@ class RoadmapExploreMission(Node):
             return False
         if not self._known_free_line(msg, approach_cell, target_cell):
             return False
-        if not self._known_free_line(msg, robot_cell, target_cell):
-            return False
         return True
 
-    def _known_safe_target_pose(self) -> Optional[PoseStamped]:
-        if (self.latest_map is None or self.target_pose is None or
-                self.preparking_pose is None):
-            return None
+    def _target_is_known_free(self) -> bool:
+        """Return whether Nav2 may meaningfully plan to the mission target."""
+        if self.latest_map is None or self.target_pose is None:
+            return False
         msg = self.latest_map
         target = self.target_pose.pose.position
         target_cell = self._world_to_map(msg, target.x, target.y)
-        if target_cell is None or not self._is_free(
-                msg, target_cell[0], target_cell[1]):
-            return None
-        approach = self.preparking_pose.pose.position
-        approach_cell = self._world_to_map(msg, approach.x, approach.y)
-        if approach_cell is None:
-            return None
+        return (
+            target_cell is not None and
+            self._is_free(msg, target_cell[0], target_cell[1]))
 
-        candidates = [(0.0, approach_cell, approach.x, approach.y)]
-        radius_cells = max(
-            0, math.ceil(
-                self.preparking_candidate_radius / msg.info.resolution))
-        for mx in range(approach_cell[0] - radius_cells,
-                        approach_cell[0] + radius_cells + 1):
-            for my in range(approach_cell[1] - radius_cells,
-                            approach_cell[1] + radius_cells + 1):
-                world = self._map_to_world(msg, mx, my)
-                if world is None:
-                    continue
-                distance = math.hypot(
-                    world[0] - approach.x, world[1] - approach.y)
-                if 1e-6 < distance <= self.preparking_candidate_radius:
-                    candidates.append((distance, (mx, my), world[0], world[1]))
+    def _dynamic_preparking_from_path(
+            self, path: Path) -> Tuple[Optional[PoseStamped], str]:
+        """
+        Derive pre-parking from the reachable path's final approach.
 
-        candidates.sort(key=lambda item: item[0])
-        for _, cell, world_x, world_y in candidates:
-            if (not self._is_free(msg, cell[0], cell[1]) or
-                    not self._safe_endpoint(msg, cell) or
-                    not self._known_free_line(msg, cell, target_cell)):
+        The standoff is accumulated backward along the Nav2 path.  This means
+        a target reached from the side or after a wall detour no longer uses
+        the unrelated mission-start-to-target direction.
+        """
+        if self.latest_map is None or self.target_pose is None:
+            return None, 'map or target is unavailable'
+        points = [
+            (pose.pose.position.x, pose.pose.position.y)
+            for pose in path.poses
+        ]
+        derived = path_standoff_point(points, self.preparking_distance)
+        if derived is None:
+            return None, 'Nav2 returned an empty path'
+
+        approach_x, approach_y, approach_yaw = derived
+        candidate = self._make_pose(
+            approach_x, approach_y, approach_yaw)
+        approach_cell = self._world_to_map(
+            self.latest_map, approach_x, approach_y)
+        if (approach_cell is None or
+                not self._is_free(
+                    self.latest_map, approach_cell[0], approach_cell[1])):
+            return None, 'derived pre-parking cell is unknown or occupied'
+        if not self._path_tail_known_free(path, candidate):
+            return None, 'final path tail to the target is not fully known-free'
+
+        # Publish even an unknown-clearance candidate so target-local reveal
+        # can use the current reachable approach as its anchor.  It must not
+        # be dispatched to Nav2 until the clearance disk becomes fully safe.
+        self.preparking_pose = candidate
+        self.preparking_pub.publish(candidate)
+        clearance = self._clearance_status(
+            self.latest_map, approach_cell)
+        if clearance != 'safe':
+            return None, (
+                f'derived pre-parking clearance is {clearance}')
+        return candidate, 'safe'
+
+    def _path_tail_known_free(
+            self, path: Path, approach: PoseStamped) -> bool:
+        """Check every map cell along the final standoff-length path suffix."""
+        if self.latest_map is None or not path.poses:
+            return False
+        points = [
+            (pose.pose.position.x, pose.pose.position.y)
+            for pose in path.poses
+        ]
+        tail_reversed: List[Point] = [points[-1]]
+        remaining = self.preparking_distance
+        for index in range(len(points) - 1, 0, -1):
+            previous = points[index - 1]
+            current = points[index]
+            segment = math.hypot(
+                current[0] - previous[0], current[1] - previous[1])
+            if segment <= 1e-9:
                 continue
-            yaw = math.atan2(target.y - world_y, target.x - world_x)
-            return self._make_pose(world_x, world_y, yaw)
-        return None
+            if remaining <= segment + 1e-9:
+                tail_reversed.append((
+                    approach.pose.position.x,
+                    approach.pose.position.y))
+                break
+            remaining -= segment
+            tail_reversed.append(previous)
+        else:
+            first = (
+                approach.pose.position.x,
+                approach.pose.position.y)
+            if math.hypot(
+                    tail_reversed[-1][0] - first[0],
+                    tail_reversed[-1][1] - first[1]) > 1e-9:
+                tail_reversed.append(first)
+
+        tail = list(reversed(tail_reversed))
+        cells: List[Cell] = []
+        for point in tail:
+            cell = self._world_to_map(
+                self.latest_map, point[0], point[1])
+            if cell is None or not self._is_free(
+                    self.latest_map, cell[0], cell[1]):
+                return False
+            if not cells or cell != cells[-1]:
+                cells.append(cell)
+        return all(
+            self._known_free_line(self.latest_map, start, end)
+            for start, end in zip(cells, cells[1:]))
 
     def _known_free_line(
             self, msg: OccupancyGrid, start: Cell, end: Cell) -> bool:
@@ -2199,6 +2413,8 @@ class RoadmapExploreMission(Node):
             self.final_goal_handle.cancel_goal_async()
         if previous_state in ('ACTIVATING_PARKING', 'VISUAL_PARKING'):
             self._set_parking_enabled(False)
+        if self.visual_parking_enabled:
+            self._set_camera_capture_enabled(False)
         self.get_logger().error(f'Goal-directed Roadmap mission failed: {reason}')
 
     def _log_waiting(self, message: str):
@@ -2222,6 +2438,9 @@ def main(args=None):
         # A clean Ctrl-C must release the high-priority /cmd_vel_dock input
         # before this coordinator disappears.
         future = node._set_parking_enabled(False)
+        if future is not None:
+            rclpy.spin_until_future_complete(node, future, timeout_sec=1.0)
+        future = node._set_camera_capture_enabled(False)
         if future is not None:
             rclpy.spin_until_future_complete(node, future, timeout_sec=1.0)
         node.destroy_node()

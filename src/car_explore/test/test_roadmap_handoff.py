@@ -51,19 +51,31 @@ def test_backtrack_does_not_invent_unknown_route_points():
     assert points == []
 
 
-def test_preparking_point_uses_start_to_target_direction():
-    x, y, yaw = HANDOFF.preparking_point((1.0, 2.0), (1.0, 5.0), 0.35)
+def test_preparking_point_follows_reachable_path_tail_after_a_detour():
+    # The start-target straight line points east, but the reachable path
+    # approaches from the south.  Pre-parking must therefore be south of the
+    # board rather than west of it.
+    result = HANDOFF.path_standoff_point(
+        [(0.0, 0.0), (0.5, 0.0), (0.5, -2.0),
+         (3.55, -2.0), (3.55, 0.0)],
+        0.35)
 
-    assert math.isclose(x, 1.0, abs_tol=1e-9)
-    assert math.isclose(y, 4.65, abs_tol=1e-9)
+    assert result is not None
+    x, y, yaw = result
+    assert math.isclose(x, 3.55, abs_tol=1e-9)
+    assert math.isclose(y, -0.35, abs_tol=1e-9)
     assert math.isclose(yaw, math.pi / 2.0, abs_tol=1e-9)
 
 
-def test_short_goal_never_puts_preparking_point_behind_start():
-    x, y, _ = HANDOFF.preparking_point((0.0, 0.0), (0.20, 0.0), 0.35)
+def test_short_path_uses_current_position_without_inventing_backtrack():
+    result = HANDOFF.path_standoff_point(
+        [(1.0, 2.0), (1.20, 2.0)], 0.35)
 
-    assert math.isclose(x, 0.15, abs_tol=1e-9)
-    assert math.isclose(y, 0.0, abs_tol=1e-9)
+    assert result is not None
+    x, y, yaw = result
+    assert math.isclose(x, 1.0, abs_tol=1e-9)
+    assert math.isclose(y, 2.0, abs_tol=1e-9)
+    assert math.isclose(yaw, 0.0, abs_tol=1e-9)
 
 
 def test_bounded_search_is_a_five_point_snake():
@@ -163,7 +175,7 @@ def test_target_local_reveal_precedes_breadcrumb_and_stays_known_safe():
     assert "'target_local_reveal_enabled': True" in mission
     assert "'reveal': 'SENDING_TARGET_REVEAL_NAVIGATION'" in mission
     assert 'self._clearance_status(msg, approach_cell) != \'unknown\'' in mission
-    assert 'self._known_free_line(msg, robot_cell, target_cell)' in mission
+    assert 'self._known_free_line(msg, approach_cell, target_cell)' in mission
 
     recovery = mission.split(
         '    def _prepare_stall_recovery', 1)[1].split(
@@ -256,6 +268,43 @@ def test_initial_known_path_skips_roadmap_before_nav2_handoff():
     assert 'self._send_final_goal()' in mission
 
 
+def test_dynamic_preparking_is_derived_from_target_path_not_start_heading():
+    package = Path(__file__).parents[1]
+    mission = (
+        package / 'scripts' / 'roadmap_explore_mission.py'
+    ).read_text()
+    helper = (
+        package / 'scripts' / 'roadmap_handoff.py'
+    ).read_text()
+    params = (
+        package / 'config' / 'roadmap_explorer.yaml'
+    ).read_text()
+
+    start = mission.split(
+        '    def _try_start', 1)[1].split(
+        '    def _check_initial_direct_path', 1)[0]
+    initial = mission.split(
+        '    def _check_initial_direct_path', 1)[1].split(
+        '    def _initial_plan_goal_response', 1)[0]
+    periodic = mission.split(
+        '    def _request_direct_path', 1)[1].split(
+        '    def _plan_goal_response', 1)[0]
+    derive = mission.split(
+        '    def _dynamic_preparking_from_path', 1)[1].split(
+        '    def _path_tail_known_free', 1)[0]
+
+    assert 'self.preparking_pose = None' in start
+    assert 'preparking_point(' not in mission
+    assert 'preparking_point(' not in helper
+    assert 'goal.goal = self.target_pose' in initial
+    assert 'goal.goal = self.target_pose' in periodic
+    assert 'path_standoff_point(points, self.preparking_distance)' in derive
+    assert 'self._path_tail_known_free(path, candidate)' in derive
+    assert "clearance != 'safe'" in derive
+    assert 'self.preparking_pub.publish(candidate)' in derive
+    assert 'preparking_candidate_radius' not in params
+
+
 def test_exploration_tag_handoff_precedes_stall_backtracking():
     mission = (
         Path(__file__).parents[1]
@@ -297,6 +346,39 @@ def test_exploration_tag_handoff_waits_for_roadmap_nav2_to_stop():
     assert 'GoalStatus.STATUS_CANCELED' in tag_result
     assert 'self._start_tag_acquisition(after_search=False)' in tag_result
     assert 'self._activate_visual_parking()' not in tag_result
+
+
+def test_camera_capture_sleeps_during_far_exploration_and_warms_near_target():
+    package = Path(__file__).parents[1]
+    mission = (
+        package / 'scripts' / 'roadmap_explore_mission.py'
+    ).read_text()
+    launch = (
+        package / 'launch' / 'roadmap_exploration.launch.py'
+    ).read_text()
+
+    assert "'camera_capture_service': '/camera/set_enabled'" in mission
+    assert "'camera_warmup_target_distance': 1.0" in mission
+    warmup = mission.split(
+        '    def _maybe_warm_camera_near_target', 1)[1].split(
+        '    def _request_camera_activation', 1)[0]
+    assert 'math.hypot(' in warmup
+    assert 'distance > self.camera_warmup_target_distance' in warmup
+    assert 'self._request_camera_activation()' in warmup
+    assert "self.state = 'ACTIVATING_CAMERA'" in mission
+    assert "request.data = True" in mission
+    acquisition = mission.split(
+        '    def _start_tag_acquisition', 1)[1].split(
+        '    def _begin_limited_search', 1)[0]
+    assert 'self._request_camera_activation()' in acquisition
+    assert 'self.camera_client.call_async(request)' in mission
+    callback = acquisition.split(
+        '    def _camera_enable_done', 1)[1].split(
+        '    def _begin_tag_acquisition', 1)[0]
+    assert 'if not response.success:' in callback
+    assert 'self._begin_tag_acquisition(' in callback
+    assert "'camera_enabled': 'false'" in launch
+    assert "'camera_warmup_target_distance', default_value='1.0'" in launch
 
 
 def test_position_arrival_has_no_heading_requirement():

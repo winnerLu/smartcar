@@ -20,6 +20,7 @@
 #include "sensor_msgs/msg/image.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
 #include "std_msgs/msg/header.hpp"
+#include "std_srvs/srv/set_bool.hpp"
 #include "cv_bridge/cv_bridge.h"
 #include "camera_info_manager/camera_info_manager.hpp"
 #include "opencv2/videoio.hpp"
@@ -42,33 +43,11 @@ public:
     image_height_ = declare_parameter<int>("image_height", 480);
     framerate_ = declare_parameter<int>("framerate", 30);
     pixel_format_ = declare_parameter<std::string>("pixel_format", "mjpg");  // mjpg / yuyv
+    enabled_ = declare_parameter<bool>("enabled", true);
     // camera_name 用于 camera_info_manager 识别配置文件
     declare_parameter<std::string>("camera_name", "logitech_c270");
     const std::string camera_name = get_parameter("camera_name").as_string();
     const std::string camera_info_url = declare_parameter<std::string>("camera_info_url", "");
-
-    // ---- 打开摄像头 ----
-    // 用字符串设备路径 + V4L2 后端;设备名由 udev 固定为 /dev/camera_c270
-    cap_.open(video_device_, cv::CAP_V4L2);
-    if (!cap_.isOpened()) {
-      RCLCPP_ERROR(get_logger(), "打开摄像头 %s 失败", video_device_.c_str());
-      RCLCPP_ERROR(get_logger(), "检查: 设备名/权限/USB 接入/udev 规则是否部署");
-      throw std::runtime_error("摄像头打开失败");
-    }
-
-    // ---- 配置帧格式(C270 不一定全接受,以回读值为准)----
-    if (pixel_format_ == "mjpg") {
-      cap_.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'));
-    }
-    cap_.set(cv::CAP_PROP_FRAME_WIDTH, static_cast<double>(image_width_));
-    cap_.set(cv::CAP_PROP_FRAME_HEIGHT, static_cast<double>(image_height_));
-    cap_.set(cv::CAP_PROP_FPS, static_cast<double>(framerate_));
-
-    image_width_ = static_cast<int>(cap_.get(cv::CAP_PROP_FRAME_WIDTH));
-    image_height_ = static_cast<int>(cap_.get(cv::CAP_PROP_FRAME_HEIGHT));
-    const double real_fps = cap_.get(cv::CAP_PROP_FPS);
-    RCLCPP_INFO(get_logger(), "已打开 %s: %dx%d @ %.1f fps (%s)",
-      video_device_.c_str(), image_width_, image_height_, real_fps, pixel_format_.c_str());
 
     // ---- camera_info 管理器 ----
     // 若提供了标定文件 URL,则发布真实内参;否则发布默认空内参(宽高 + frame_id)
@@ -85,18 +64,94 @@ public:
     // ---- 发布 ----
     image_pub_ = create_publisher<sensor_msgs::msg::Image>("~/image_raw", 10);
     info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>("~/camera_info", 10);
+    enable_service_ = create_service<std_srvs::srv::SetBool>(
+      "~/set_enabled",
+      std::bind(
+        &CarCameraNode::on_set_enabled, this,
+        std::placeholders::_1, std::placeholders::_2));
 
     // ---- 抓帧定时器 ----
     const int period_ms = std::max(1, 1000 / std::max(1, framerate_));
     timer_ = create_wall_timer(
       std::chrono::milliseconds(period_ms), std::bind(&CarCameraNode::on_capture, this));
 
-    RCLCPP_INFO(get_logger(), "car_camera 节点已启动");
+    if (enabled_ && !open_camera()) {
+      throw std::runtime_error("摄像头打开失败");
+    }
+    if (enabled_) {
+      RCLCPP_INFO(get_logger(), "car_camera 节点已启动，采集已启用");
+    } else {
+      RCLCPP_INFO(
+        get_logger(),
+        "car_camera 节点已启动，采集处于休眠状态；等待 ~/set_enabled");
+    }
   }
 
 private:
+  bool open_camera()
+  {
+    if (cap_.isOpened()) {
+      enabled_ = true;
+      return true;
+    }
+
+    // 用字符串设备路径 + V4L2 后端;设备名由 udev 固定为 /dev/camera_c270
+    cap_.open(video_device_, cv::CAP_V4L2);
+    if (!cap_.isOpened()) {
+      enabled_ = false;
+      RCLCPP_ERROR(get_logger(), "打开摄像头 %s 失败", video_device_.c_str());
+      RCLCPP_ERROR(get_logger(), "检查: 设备名/权限/USB 接入/udev 规则是否部署");
+      return false;
+    }
+
+    // C270 不一定接受全部配置，以设备回读值为准。
+    if (pixel_format_ == "mjpg") {
+      cap_.set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'));
+    }
+    cap_.set(cv::CAP_PROP_FRAME_WIDTH, static_cast<double>(image_width_));
+    cap_.set(cv::CAP_PROP_FRAME_HEIGHT, static_cast<double>(image_height_));
+    cap_.set(cv::CAP_PROP_FPS, static_cast<double>(framerate_));
+
+    image_width_ = static_cast<int>(cap_.get(cv::CAP_PROP_FRAME_WIDTH));
+    image_height_ = static_cast<int>(cap_.get(cv::CAP_PROP_FRAME_HEIGHT));
+    const double real_fps = cap_.get(cv::CAP_PROP_FPS);
+    enabled_ = true;
+    RCLCPP_INFO(get_logger(), "已打开 %s: %dx%d @ %.1f fps (%s)",
+      video_device_.c_str(), image_width_, image_height_, real_fps, pixel_format_.c_str());
+    return true;
+  }
+
+  void close_camera()
+  {
+    enabled_ = false;
+    if (cap_.isOpened()) {
+      cap_.release();
+      RCLCPP_INFO(get_logger(), "摄像头采集已关闭，设备进入休眠");
+    }
+  }
+
+  void on_set_enabled(
+    const std::shared_ptr<std_srvs::srv::SetBool::Request> request,
+    std::shared_ptr<std_srvs::srv::SetBool::Response> response)
+  {
+    if (request->data) {
+      response->success = open_camera();
+      response->message = response->success ?
+        "camera capture enabled" : "failed to open camera device";
+      return;
+    }
+
+    close_camera();
+    response->success = true;
+    response->message = "camera capture disabled";
+  }
+
   void on_capture()
   {
+    if (!enabled_ || !cap_.isOpened()) {
+      return;
+    }
+
     cv::Mat frame;
     if (!cap_.read(frame) || frame.empty()) {
       RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "抓帧失败(空帧)");
@@ -129,6 +184,7 @@ private:
   int image_width_ = 640;
   int image_height_ = 480;
   int framerate_ = 30;
+  bool enabled_ = true;
 
   // OpenCV
   cv::VideoCapture cap_;
@@ -136,6 +192,7 @@ private:
   // ROS 接口
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr image_pub_;
   rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr info_pub_;
+  rclcpp::Service<std_srvs::srv::SetBool>::SharedPtr enable_service_;
   rclcpp::TimerBase::SharedPtr timer_;
   std::unique_ptr<camera_info_manager::CameraInfoManager> cinfo_;
 };

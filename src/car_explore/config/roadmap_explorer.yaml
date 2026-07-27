@@ -134,10 +134,9 @@ roadmap_explore_mission:
     goal_left: 0.0
     goal_radius: 0.25
     visual_parking_enabled: true
-    # Nav2只到达标称停车板中心前方的预泊车点；任务节点按XY距离主动取消，
-    # 不等待SimpleGoalChecker的终点航向对齐。
+    # 先规划到停车板中心，再沿当前可达路径反向量取预泊车距离；任务节点
+    # 按XY距离主动取消，不等待SimpleGoalChecker的终点航向对齐。
     preparking_distance: 0.35
-    preparking_candidate_radius: 0.08
     # 专用position_goal_checker为0.05m；任务节点在0.06m内主动交接。
     position_arrival_tolerance: 0.06
     # launch文件会覆盖为car_navigation内已安装的绝对路径。
@@ -149,6 +148,11 @@ roadmap_explore_mission:
     tag_inlier_topic: /apriltag_detector/inlier_count
     parking_complete_topic: /board_parker/parking_complete
     parking_enable_service: /board_parker/set_enabled
+    # Roadmap远离目标时关闭C270；进入目标附近后由任务协调器按需打开。
+    camera_capture_service: /camera/set_enabled
+    # 大范围探索关闭相机；进入目标1m范围提前预热。真正交接仍需进入下方0.75m
+    # 范围并连续确认完整Tag，不会仅因进入预热区就切换控制权。
+    camera_warmup_target_distance: 1.0
     tag_max_age: 0.40
     tag_confirm_time: 0.50
     tag_max_reprojection_error: 3.0

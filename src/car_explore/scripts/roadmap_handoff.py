@@ -1,7 +1,7 @@
 """Pure geometry and perception gates for Roadmap-to-parking handoff."""
 
 import math
-from typing import List, Sequence, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 
 Point = Tuple[float, float]
@@ -63,22 +63,53 @@ def breadcrumb_backtrack_points(
     return [point for _, point in selected]
 
 
-def preparking_point(
-        start: Point, target: Point,
-        standoff: float) -> Tuple[float, float, float]:
-    """Return a point before *target* along the start-to-target direction."""
-    dx = target[0] - start[0]
-    dy = target[1] - start[1]
-    distance = math.hypot(dx, dy)
-    if distance <= 1e-9:
-        return target[0], target[1], 0.0
-    yaw = math.atan2(dy, dx)
-    # Never put a pre-parking point behind the mission start for a short goal.
-    bounded_standoff = min(max(0.0, standoff), max(0.0, distance - 0.15))
-    return (
-        target[0] - math.cos(yaw) * bounded_standoff,
-        target[1] - math.sin(yaw) * bounded_standoff,
-        yaw)
+def path_standoff_point(
+        path: Sequence[Point],
+        standoff: float) -> Optional[Tuple[float, float, float]]:
+    """
+    Return a point ``standoff`` metres before the end of a reachable path.
+
+    Distance is accumulated backwards along the path polyline, not along the
+    start-to-target straight line.  The returned yaw follows the final path
+    segment toward the target.  If the whole path is shorter than the requested
+    standoff, its first point is returned instead of inventing a point behind
+    the robot.
+    """
+    if not path:
+        return None
+    points = [(float(point[0]), float(point[1])) for point in path]
+    if len(points) == 1:
+        return points[0][0], points[0][1], 0.0
+
+    remaining = max(0.0, float(standoff))
+    last_yaw = 0.0
+    for index in range(len(points) - 1, 0, -1):
+        previous = points[index - 1]
+        current = points[index]
+        dx = current[0] - previous[0]
+        dy = current[1] - previous[1]
+        segment = math.hypot(dx, dy)
+        if segment <= 1e-9:
+            continue
+        last_yaw = math.atan2(dy, dx)
+        if remaining <= segment + 1e-9:
+            fraction = min(1.0, remaining / segment)
+            return (
+                current[0] - fraction * dx,
+                current[1] - fraction * dy,
+                last_yaw,
+            )
+        remaining -= segment
+
+    # The robot is already inside the requested visual-handoff distance.
+    first_yaw = last_yaw
+    for first, second in zip(points, points[1:]):
+        dx = second[0] - first[0]
+        dy = second[1] - first[1]
+        if math.hypot(dx, dy) > 1e-9:
+            first_yaw = math.atan2(dy, dx)
+            break
+    return points[0][0], points[0][1], first_yaw
 
 
 def bounded_search_points(

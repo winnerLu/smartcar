@@ -34,6 +34,8 @@ def generate_launch_description():
         'position_arrival_tolerance')
     position_only_bt_xml = LaunchConfiguration('position_only_bt_xml')
     tag_acquire_timeout = LaunchConfiguration('tag_acquire_timeout')
+    camera_warmup_target_distance = LaunchConfiguration(
+        'camera_warmup_target_distance')
     search_forward_step = LaunchConfiguration('search_forward_step')
     search_lateral_step = LaunchConfiguration('search_lateral_step')
     search_timeout = LaunchConfiguration('search_timeout')
@@ -103,6 +105,9 @@ def generate_launch_description():
             'tag_acquire_timeout', default_value='2.0',
             description='预泊车点静止等待完整Tag的时间(s)'),
         DeclareLaunchArgument(
+            'camera_warmup_target_distance', default_value='1.0',
+            description='进入目标该距离后提前打开并预热摄像头(m)'),
+        DeclareLaunchArgument(
             'search_forward_step', default_value='0.10',
             description='有限视觉搜索向目标前进的最大距离(m)'),
         DeclareLaunchArgument(
@@ -156,6 +161,7 @@ def generate_launch_description():
             condition=IfCondition(launch_camera),
             launch_arguments={
                 'video_device': video_device,
+                'camera_enabled': 'false',
                 'parking_enabled': 'false',
                 'cmd_topic': '/cmd_vel_dock',
             }.items(),
@@ -220,6 +226,8 @@ def generate_launch_description():
                     'position_arrival_tolerance': ParameterValue(
                         position_arrival_tolerance, value_type=float),
                     'position_only_bt_xml': position_only_bt_xml,
+                    'camera_warmup_target_distance': ParameterValue(
+                        camera_warmup_target_distance, value_type=float),
                     'tag_acquire_timeout': ParameterValue(
                         tag_acquire_timeout, value_type=float),
                     'search_forward_step': ParameterValue(
