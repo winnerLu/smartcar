@@ -13,6 +13,71 @@ HANDOFF = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(HANDOFF)
 
 
+def test_startup_escape_progress_is_measured_along_original_heading():
+    progress, lateral, heading_error = HANDOFF.startup_escape_metrics(
+        (1.0, 2.0, math.pi / 2.0),
+        (1.0, 2.20, math.pi / 2.0 + math.radians(2.0)))
+
+    assert math.isclose(progress, 0.20, abs_tol=1e-9)
+    assert math.isclose(lateral, 0.0, abs_tol=1e-9)
+    assert math.isclose(
+        heading_error, math.radians(-2.0), abs_tol=1e-9)
+
+
+def test_startup_escape_guard_only_blocks_the_forward_swept_corridor():
+    points = [
+        (-0.05, 0.00),  # behind the base
+        (0.20, 0.14),   # just outside the swept half-width
+        (0.42, 0.00),   # beyond the current remaining sweep
+    ]
+    assert HANDOFF.startup_escape_blocking_point(
+        points, remaining_distance=0.10, footprint_front=0.197,
+        braking_margin=0.10, half_width=0.13) is None
+
+    points.extend([(0.30, 0.08), (0.12, -0.05)])
+    assert HANDOFF.startup_escape_blocking_point(
+        points, remaining_distance=0.10, footprint_front=0.197,
+        braking_margin=0.10, half_width=0.13) == (0.12, -0.05)
+
+
+def test_startup_escape_is_one_time_and_has_dedicated_mux_ownership():
+    package = Path(__file__).parents[1]
+    mission = (
+        package / 'scripts' / 'roadmap_explore_mission.py'
+    ).read_text()
+    launch = (
+        package / 'launch' / 'roadmap_exploration.launch.py'
+    ).read_text()
+    params = (
+        package / 'config' / 'roadmap_explorer.yaml'
+    ).read_text()
+    mux = (
+        package.parent / 'car_navigation' / 'config' / 'twist_mux.yaml'
+    ).read_text()
+
+    start = mission.split(
+        '    def _try_start', 1)[1].split(
+        '    def _begin_planning_after_startup', 1)[0]
+    assert start.index('self.target_pose = self._make_pose') < start.index(
+        "self.state = 'STARTUP_ESCAPE'")
+    assert "'startup_escape_cmd_topic': '/cmd_vel_escape'" in mission
+    assert "'startup_escape_odom_frame': 'odom'" in mission
+    assert 'self.create_timer(\n            0.10' in mission
+    assert 'startup_escape_blocking_point(' in mission
+    assert 'self._publish_startup_escape_stop()' in mission.split(
+        '    def _abort_mission', 1)[1]
+    assert "self.state = 'STARTUP_ESCAPE_SETTLE'" in mission
+    assert "startup_escape_enabled', default_value='true'" in launch
+    assert "startup_escape_distance', default_value='0.20'" in launch
+    assert "startup_escape_speed', default_value='0.08'" in launch
+    assert 'startup_escape_enabled: true' in params
+    assert 'startup_escape_distance: 0.20' in params
+    assert 'startup_escape_speed: 0.08' in params
+    assert 'startup_escape:' in mux
+    assert 'topic: cmd_vel_escape' in mux
+    assert 'priority: 75' in mux
+
+
 def test_breadcrumbs_sample_motion_and_bound_history():
     history = []
 

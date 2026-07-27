@@ -7,6 +7,46 @@ from typing import List, Optional, Sequence, Tuple
 Point = Tuple[float, float]
 
 
+def wrap_angle(angle: float) -> float:
+    """Wrap an angle to [-pi, pi)."""
+    return (float(angle) + math.pi) % (2.0 * math.pi) - math.pi
+
+
+def startup_escape_metrics(
+        start: Tuple[float, float, float],
+        current: Tuple[float, float, float]) -> Tuple[float, float, float]:
+    """Return forward progress, lateral drift, and heading error from start."""
+    dx = float(current[0]) - float(start[0])
+    dy = float(current[1]) - float(start[1])
+    yaw = float(start[2])
+    return (
+        math.cos(yaw) * dx + math.sin(yaw) * dy,
+        -math.sin(yaw) * dx + math.cos(yaw) * dy,
+        wrap_angle(float(start[2]) - float(current[2])),
+    )
+
+
+def startup_escape_blocking_point(
+        points: Sequence[Point], remaining_distance: float,
+        footprint_front: float, braking_margin: float,
+        half_width: float) -> Optional[Point]:
+    """Return the nearest scan point inside the remaining forward sweep."""
+    maximum_x = (
+        max(0.0, float(footprint_front)) +
+        max(0.0, float(remaining_distance)) +
+        max(0.0, float(braking_margin)))
+    bounded_half_width = max(0.0, float(half_width))
+    blocked = [
+        (float(x), float(y))
+        for x, y in points
+        if 0.0 <= float(x) <= maximum_x and
+        abs(float(y)) <= bounded_half_width
+    ]
+    if not blocked:
+        return None
+    return min(blocked, key=lambda point: point[0])
+
+
 def append_breadcrumb(
         history: List[Point], point: Point, min_spacing: float,
         max_points: int) -> bool:

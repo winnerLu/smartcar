@@ -22,6 +22,9 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time')
     return_to_start = LaunchConfiguration('return_to_start')
     start_delay = LaunchConfiguration('start_delay')
+    startup_escape_enabled = LaunchConfiguration('startup_escape_enabled')
+    startup_escape_distance = LaunchConfiguration('startup_escape_distance')
+    startup_escape_speed = LaunchConfiguration('startup_escape_speed')
     goal_directed_mode = LaunchConfiguration('goal_directed_mode')
     goal_forward = LaunchConfiguration('goal_forward')
     goal_left = LaunchConfiguration('goal_left')
@@ -154,6 +157,15 @@ def generate_launch_description():
             description='一次停滞恢复最多执行的目标局部补扫次数'),
         DeclareLaunchArgument('return_to_start', default_value='false'),
         DeclareLaunchArgument('start_delay', default_value='5.0'),
+        DeclareLaunchArgument(
+            'startup_escape_enabled', default_value='true',
+            description='锁定目标后、Roadmap启动前执行一次固定前进'),
+        DeclareLaunchArgument(
+            'startup_escape_distance', default_value='0.20',
+            description='启动时固定前进距离(m)'),
+        DeclareLaunchArgument(
+            'startup_escape_speed', default_value='0.08',
+            description='启动时固定前进速度(m/s)'),
 
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(
@@ -216,6 +228,12 @@ def generate_launch_description():
                         return_to_start, value_type=bool),
                     'start_delay': ParameterValue(
                         start_delay, value_type=float),
+                    'startup_escape_enabled': ParameterValue(
+                        startup_escape_enabled, value_type=bool),
+                    'startup_escape_distance': ParameterValue(
+                        startup_escape_distance, value_type=float),
+                    'startup_escape_speed': ParameterValue(
+                        startup_escape_speed, value_type=float),
                     'goal_directed_mode': ParameterValue(
                         goal_directed_mode, value_type=bool),
                     'goal_forward': ParameterValue(

@@ -3,13 +3,13 @@
 Launch velocity arbitration with an optional collision monitor.
 
 数据流:
-    Nav2      -> /cmd_vel        ┐
-    teleop    -> /cmd_vel_teleop ├-> twist_mux -> /cmd_vel_raw ───────────────> car_base
-    泊车      -> /cmd_vel_dock   ┘                └-> collision_monitor
-                                                     -> /cmd_vel_safe -> car_base
+    泊车      -> /cmd_vel_dock   ┐
+    启动脱困  -> /cmd_vel_escape ├-> twist_mux -> /cmd_vel_raw ───────────────> car_base
+    Nav2      -> /cmd_vel        │                └-> collision_monitor
+    teleop    -> /cmd_vel_teleop ┘                     -> /cmd_vel_safe -> car_base
 
 作用:
-- twist_mux:多速度源按优先级仲裁(泊车>Nav2>遥控),防止多源抢底盘。
+- twist_mux:多速度源按优先级仲裁(泊车>启动脱困>Nav2>遥控),防止多源抢底盘。
 - collision_monitor:可选。启用时用 /scan 和当前速度方向预测 footprint 碰撞。
 
 关闭碰撞监控时 car_base 应订阅 /cmd_vel_raw；开启时订阅 /cmd_vel_safe。

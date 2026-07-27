@@ -7,7 +7,7 @@ from typing import List, Optional, Tuple
 
 from action_msgs.msg import GoalStatus
 from ament_index_python.packages import get_package_share_directory
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, Twist
 from nav2_msgs.action import ComputePathToPose, NavigateToPose
 from nav_msgs.msg import OccupancyGrid, Path
 import rclpy
@@ -17,6 +17,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from rclpy.time import Time
 from roadmap_explorer_msgs.action import Explore
+from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Bool, Float32, UInt32
 from std_srvs.srv import SetBool
 from tf2_ros import Buffer, TransformException, TransformListener
@@ -29,6 +30,8 @@ from roadmap_handoff import (
     path_standoff_point,
     position_reached,
     progressive_probe_points,
+    startup_escape_blocking_point,
+    startup_escape_metrics,
     tag_observation_valid,
     target_reveal_points,
 )
@@ -57,6 +60,11 @@ class RoadmapExploreMission(Node):
             PoseStamped, '~/target_pose', target_qos)
         self.preparking_pub = self.create_publisher(
             PoseStamped, '~/preparking_pose', target_qos)
+        self.startup_escape_pub = self.create_publisher(
+            Twist, self.startup_escape_cmd_topic, 10)
+        self.scan_sub = self.create_subscription(
+            LaserScan, self.startup_escape_scan_topic,
+            self._scan_callback, 10)
 
         self.tag_pose_sub = self.create_subscription(
             PoseStamped, self.tag_pose_topic, self._tag_pose_callback, 10)
@@ -84,6 +92,8 @@ class RoadmapExploreMission(Node):
             SetBool, self.camera_capture_service)
 
         self.latest_map: Optional[OccupancyGrid] = None
+        self.latest_scan: Optional[LaserScan] = None
+        self.latest_scan_time = 0.0
         self.start_pose: Optional[PoseStamped] = None
         self.target_pose: Optional[PoseStamped] = None
         self.preparking_pose: Optional[PoseStamped] = None
@@ -150,6 +160,11 @@ class RoadmapExploreMission(Node):
         self.target_reveal_plan_candidate: Optional[PoseStamped] = None
         self.target_reveal_attempts = 0
         self.target_reveal_settle_start_time = 0.0
+        self.startup_escape_start: Optional[Tuple[float, float, float]] = None
+        self.startup_escape_start_time = 0.0
+        self.startup_escape_settle_start_time = 0.0
+        self.startup_escape_timer = self.create_timer(
+            0.10, self._startup_escape_control_tick)
         self.timer = self.create_timer(0.5, self._tick)
 
     def _declare_parameters(self):
@@ -159,6 +174,21 @@ class RoadmapExploreMission(Node):
             'map_topic': '/map',
             'planner_id': 'GridBased',
             'start_delay': 5.0,
+            'startup_escape_enabled': True,
+            'startup_escape_cmd_topic': '/cmd_vel_escape',
+            'startup_escape_scan_topic': '/scan',
+            'startup_escape_odom_frame': 'odom',
+            'startup_escape_distance': 0.20,
+            'startup_escape_speed': 0.08,
+            'startup_escape_timeout': 4.0,
+            'startup_escape_settle_time': 1.0,
+            'startup_escape_max_yaw_error_deg': 8.0,
+            'startup_escape_heading_kp': 1.5,
+            'startup_escape_max_angular': 0.20,
+            'startup_escape_scan_max_age': 0.50,
+            'startup_escape_swept_half_width': 0.13,
+            'startup_escape_footprint_front': 0.197,
+            'startup_escape_braking_margin': 0.10,
             'return_to_start': False,
             'goal_directed_mode': True,
             'goal_forward': 3.0,
@@ -227,7 +257,20 @@ class RoadmapExploreMission(Node):
     def _load_parameters(self):
         for name in (
                 'map_frame', 'base_frame', 'map_topic', 'planner_id',
-                'start_delay', 'return_to_start', 'goal_directed_mode',
+                'start_delay',
+                'startup_escape_enabled', 'startup_escape_cmd_topic',
+                'startup_escape_scan_topic', 'startup_escape_odom_frame',
+                'startup_escape_distance',
+                'startup_escape_speed', 'startup_escape_timeout',
+                'startup_escape_settle_time',
+                'startup_escape_max_yaw_error_deg',
+                'startup_escape_heading_kp',
+                'startup_escape_max_angular',
+                'startup_escape_scan_max_age',
+                'startup_escape_swept_half_width',
+                'startup_escape_footprint_front',
+                'startup_escape_braking_margin',
+                'return_to_start', 'goal_directed_mode',
                 'goal_forward', 'goal_left', 'goal_radius',
                 'visual_parking_enabled', 'preparking_distance',
                 'position_arrival_tolerance',
@@ -271,6 +314,29 @@ class RoadmapExploreMission(Node):
             setattr(self, name, self.get_parameter(name).value)
 
         self.start_delay = float(self.start_delay)
+        self.startup_escape_enabled = bool(self.startup_escape_enabled)
+        self.startup_escape_distance = max(
+            0.0, float(self.startup_escape_distance))
+        self.startup_escape_speed = max(
+            0.0, float(self.startup_escape_speed))
+        self.startup_escape_timeout = max(
+            0.5, float(self.startup_escape_timeout))
+        self.startup_escape_settle_time = max(
+            0.5, float(self.startup_escape_settle_time))
+        self.startup_escape_max_yaw_error = math.radians(max(
+            1.0, float(self.startup_escape_max_yaw_error_deg)))
+        self.startup_escape_heading_kp = max(
+            0.0, float(self.startup_escape_heading_kp))
+        self.startup_escape_max_angular = max(
+            0.0, float(self.startup_escape_max_angular))
+        self.startup_escape_scan_max_age = max(
+            0.10, float(self.startup_escape_scan_max_age))
+        self.startup_escape_swept_half_width = max(
+            0.05, float(self.startup_escape_swept_half_width))
+        self.startup_escape_footprint_front = max(
+            0.0, float(self.startup_escape_footprint_front))
+        self.startup_escape_braking_margin = max(
+            0.0, float(self.startup_escape_braking_margin))
         self.return_to_start = bool(self.return_to_start)
         self.goal_directed_mode = bool(self.goal_directed_mode)
         self.goal_forward = float(self.goal_forward)
@@ -377,6 +443,10 @@ class RoadmapExploreMission(Node):
     def _map_callback(self, msg: OccupancyGrid):
         self.latest_map = msg
 
+    def _scan_callback(self, msg: LaserScan):
+        self.latest_scan = msg
+        self.latest_scan_time = self._now_seconds()
+
     def _tag_pose_callback(self, _msg: PoseStamped):
         self.last_tag_pose_time = self._now_seconds()
 
@@ -399,6 +469,16 @@ class RoadmapExploreMission(Node):
         now = self._now_seconds()
         if self.state == 'STARTING':
             self._try_start(now)
+            return
+        if self.state == 'STARTUP_ESCAPE':
+            return
+        if self.state == 'STARTUP_ESCAPE_SETTLE':
+            if (now - self.startup_escape_settle_start_time >=
+                    self.startup_escape_settle_time):
+                self.get_logger().info(
+                    'Startup escape settled; releasing direct velocity '
+                    'ownership and starting normal planning')
+                self._begin_planning_after_startup()
             return
         if self.state in ('COMPLETE', 'FAILED'):
             return
@@ -540,6 +620,15 @@ class RoadmapExploreMission(Node):
         if robot is None:
             return
         x, y, yaw = robot
+        startup_escape_start = None
+        if (
+                self.startup_escape_enabled and
+                self.startup_escape_distance > 0.0 and
+                self.startup_escape_speed > 0.0):
+            startup_escape_start = self._pose_in_frame(
+                str(self.startup_escape_odom_frame))
+            if startup_escape_start is None:
+                return
         self.start_pose = self._make_pose(x, y, yaw)
         goal_x = x + math.cos(yaw) * self.goal_forward - math.sin(yaw) * self.goal_left
         goal_y = y + math.sin(yaw) * self.goal_forward + math.cos(yaw) * self.goal_left
@@ -562,10 +651,172 @@ class RoadmapExploreMission(Node):
             'be measured backward along a reachable Nav2 path. '
             'Final Nav2 arrival uses XY position only; yaw is not a completion condition.')
 
+        if (
+                self.startup_escape_enabled and
+                self.startup_escape_distance > 0.0 and
+                self.startup_escape_speed > 0.0):
+            self.startup_escape_start = startup_escape_start
+            self.startup_escape_start_time = now
+            self.state = 'STARTUP_ESCAPE'
+            self._publish_startup_escape_stop()
+            self.get_logger().warning(
+                'Starting one-time trusted forward escape before Roadmap: '
+                f'distance={self.startup_escape_distance:.2f}m, '
+                f'speed={self.startup_escape_speed:.2f}m/s, '
+                f'max_time={self.startup_escape_timeout:.1f}s. '
+                'The absolute mission target is already locked to the '
+                'original start pose.')
+            return
+        self._begin_planning_after_startup()
+
+    def _startup_escape_control_tick(self):
+        if self.state == 'STARTUP_ESCAPE':
+            self._update_startup_escape(self._now_seconds())
+
+    def _begin_planning_after_startup(self):
+        if self.state in ('FAILED', 'COMPLETE'):
+            return
         if self.goal_directed_mode:
             self._check_initial_direct_path()
         else:
             self._send_exploration_goal(new_session=True)
+
+    def _publish_startup_escape_stop(self):
+        self.startup_escape_pub.publish(Twist())
+
+    def _startup_escape_scan_points(self) -> Optional[List[Point]]:
+        if self.latest_scan is None:
+            return None
+        try:
+            transform = self.tf_buffer.lookup_transform(
+                str(self.base_frame), self.latest_scan.header.frame_id, Time(),
+                timeout=Duration(seconds=0.2))
+        except TransformException as exc:
+            self._log_waiting(
+                f'Waiting for startup scan transform into '
+                f'{self.base_frame}: {exc}')
+            return None
+
+        q = transform.transform.rotation
+        yaw = math.atan2(
+            2.0 * (q.w * q.z + q.x * q.y),
+            1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        cos_yaw = math.cos(yaw)
+        sin_yaw = math.sin(yaw)
+        translation_x = transform.transform.translation.x
+        translation_y = transform.transform.translation.y
+        minimum_range = max(0.02, float(self.latest_scan.range_min))
+        maximum_range = float(self.latest_scan.range_max)
+        points: List[Point] = []
+        for index, distance in enumerate(self.latest_scan.ranges):
+            distance = float(distance)
+            if (
+                    not math.isfinite(distance) or
+                    distance < minimum_range or distance > maximum_range):
+                continue
+            angle = (
+                float(self.latest_scan.angle_min) +
+                index * float(self.latest_scan.angle_increment))
+            scan_x = distance * math.cos(angle)
+            scan_y = distance * math.sin(angle)
+            points.append((
+                translation_x + cos_yaw * scan_x - sin_yaw * scan_y,
+                translation_y + sin_yaw * scan_x + cos_yaw * scan_y,
+            ))
+        return points
+
+    def _update_startup_escape(self, now: float):
+        if self.startup_escape_start is None:
+            self._abort_mission('Startup escape has no recorded start pose')
+            return
+        if now - self.startup_escape_start_time > self.startup_escape_timeout:
+            self._publish_startup_escape_stop()
+            self._abort_mission(
+                'Startup escape timed out before reaching '
+                f'{self.startup_escape_distance:.2f}m')
+            return
+
+        robot = self._pose_in_frame(str(self.startup_escape_odom_frame))
+        if robot is None:
+            self._publish_startup_escape_stop()
+            return
+        progress, lateral_drift, heading_error = startup_escape_metrics(
+            self.startup_escape_start, robot)
+        if progress >= self.startup_escape_distance:
+            self._finish_startup_escape(
+                now, progress, lateral_drift, heading_error)
+            return
+        if progress < -0.02:
+            self._publish_startup_escape_stop()
+            self._abort_mission(
+                f'Startup escape moved backward by {-progress:.3f}m')
+            return
+        if abs(heading_error) > self.startup_escape_max_yaw_error:
+            self._publish_startup_escape_stop()
+            self._abort_mission(
+                f'Startup escape heading deviated by '
+                f'{math.degrees(heading_error):.1f}deg')
+            return
+        if (
+                self.latest_scan is None or
+                now - self.latest_scan_time >
+                self.startup_escape_scan_max_age):
+            self._publish_startup_escape_stop()
+            self._log_waiting(
+                'Waiting for a fresh scan before startup forward motion')
+            return
+
+        scan_points = self._startup_escape_scan_points()
+        if scan_points is None:
+            self._publish_startup_escape_stop()
+            return
+        remaining = max(0.0, self.startup_escape_distance - progress)
+        blocking = startup_escape_blocking_point(
+            scan_points, remaining,
+            self.startup_escape_footprint_front,
+            self.startup_escape_braking_margin,
+            self.startup_escape_swept_half_width)
+        if blocking is not None:
+            self._publish_startup_escape_stop()
+            self._abort_mission(
+                'Startup forward sweep is blocked at '
+                f'base_link=({blocking[0]:.2f}, {blocking[1]:.2f})m')
+            return
+
+        cmd = Twist()
+        cmd.linear.x = self.startup_escape_speed
+        cmd.angular.z = max(
+            -self.startup_escape_max_angular,
+            min(
+                self.startup_escape_max_angular,
+                self.startup_escape_heading_kp * heading_error))
+        self.startup_escape_pub.publish(cmd)
+        self.get_logger().info(
+            f'Startup escape: progress={progress:.3f}/'
+            f'{self.startup_escape_distance:.3f}m, '
+            f'lateral={lateral_drift:+.3f}m, '
+            f'heading={math.degrees(heading_error):+.1f}deg, '
+            f'cmd=(v={cmd.linear.x:.3f},w={cmd.angular.z:+.3f})',
+            throttle_duration_sec=0.5)
+
+    def _finish_startup_escape(
+            self, now: float, progress: float,
+            lateral_drift: float, heading_error: float):
+        self._publish_startup_escape_stop()
+        robot = self._robot_pose()
+        if robot is not None:
+            append_breadcrumb(
+                self.breadcrumbs, (robot[0], robot[1]),
+                min(self.breadcrumb_spacing, self.startup_escape_distance),
+                self.breadcrumb_max_points)
+        self.startup_escape_settle_start_time = now
+        self.state = 'STARTUP_ESCAPE_SETTLE'
+        self.get_logger().info(
+            f'Startup escape complete: forward={progress:.3f}m, '
+            f'lateral={lateral_drift:+.3f}m, '
+            f'heading={math.degrees(heading_error):+.1f}deg. '
+            f'Stopping for {self.startup_escape_settle_time:.1f}s so SLAM, '
+            'costmaps, and twist_mux can settle.')
 
     def _check_initial_direct_path(self):
         """Skip Roadmap when a path-derived pre-parking pose is already safe."""
@@ -717,7 +968,8 @@ class RoadmapExploreMission(Node):
                 self.camera_activation_in_progress or
                 self.target_pose is None or
                 self.state in (
-                    'STARTING', 'COMPLETE', 'FAILED',
+                    'STARTING', 'STARTUP_ESCAPE',
+                    'STARTUP_ESCAPE_SETTLE', 'COMPLETE', 'FAILED',
                     'ACTIVATING_CAMERA', 'VISUAL_PARKING')):
             return
         robot = self._robot_pose()
@@ -2331,13 +2583,18 @@ class RoadmapExploreMission(Node):
         return known / total if total else 0.0
 
     def _robot_pose(self) -> Optional[Tuple[float, float, float]]:
+        return self._pose_in_frame(str(self.map_frame))
+
+    def _pose_in_frame(
+            self, target_frame: str) -> Optional[Tuple[float, float, float]]:
         try:
             transform = self.tf_buffer.lookup_transform(
-                str(self.map_frame), str(self.base_frame), Time(),
+                target_frame, str(self.base_frame), Time(),
                 timeout=Duration(seconds=0.2))
         except TransformException as exc:
             self._log_waiting(
-                f'Waiting for {self.map_frame}->{self.base_frame} transform: {exc}')
+                f'Waiting for {target_frame}->{self.base_frame} '
+                f'transform: {exc}')
             return None
         q = transform.transform.rotation
         yaw = math.atan2(
@@ -2407,6 +2664,7 @@ class RoadmapExploreMission(Node):
             return
         previous_state = self.state
         self.state = 'FAILED'
+        self._publish_startup_escape_stop()
         if self.explore_goal_handle is not None:
             self.explore_goal_handle.cancel_goal_async()
         if self.final_goal_handle is not None:
@@ -2435,8 +2693,9 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        # A clean Ctrl-C must release the high-priority /cmd_vel_dock input
-        # before this coordinator disappears.
+        # A clean Ctrl-C must zero both direct velocity inputs before this
+        # coordinator disappears.
+        node._publish_startup_escape_stop()
         future = node._set_parking_enabled(False)
         if future is not None:
             rclpy.spin_until_future_complete(node, future, timeout_sec=1.0)

@@ -129,6 +129,24 @@ roadmap_explore_mission:
     map_topic: /map
     planner_id: GridBased
     start_delay: 5.0
+    # 锁定启动瞬间的绝对目标后，只执行一次低速直行，离开初始未知/高代价
+    # 栅格。该动作不修改地图，也不改变后续Roadmap和窄通道策略。
+    startup_escape_enabled: true
+    startup_escape_cmd_topic: /cmd_vel_escape
+    startup_escape_scan_topic: /scan
+    startup_escape_odom_frame: odom
+    startup_escape_distance: 0.20
+    startup_escape_speed: 0.08
+    startup_escape_timeout: 4.0
+    startup_escape_settle_time: 1.0
+    startup_escape_max_yaw_error_deg: 8.0
+    startup_escape_heading_kp: 1.5
+    startup_escape_max_angular: 0.20
+    startup_escape_scan_max_age: 0.50
+    # 前进时只检查车体将扫过的矩形区域；任一点落入其中就中止任务。
+    startup_escape_swept_half_width: 0.13
+    startup_escape_footprint_front: 0.197
+    startup_escape_braking_margin: 0.10
     return_to_start: false
     goal_directed_mode: true
     goal_forward: 3.0

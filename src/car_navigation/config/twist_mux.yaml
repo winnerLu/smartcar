@@ -11,6 +11,11 @@ twist_mux:
         topic: cmd_vel_dock
         timeout: 0.5
         priority: 100
+      # 任务开始时一次性低速直行0.20m；高于Nav2，完成后零速并自动超时释放。
+      startup_escape:
+        topic: cmd_vel_escape
+        timeout: 0.5
+        priority: 75
       # Nav2 导航(Nav2 默认输出 /cmd_vel,直接订阅,无需改 Nav2)
       navigation:
         topic: cmd_vel
