@@ -274,6 +274,7 @@ def test_roadmap_and_nav2_share_hard_clearance_map():
     assert 'map_topic: "/map_clearance"' in roadmap_params
     assert 'map_topic: /map_clearance' in nav_params
     assert "'clearance_radius', default_value='0.175'" in slam_launch
+    assert "'startup_escape_radius', default_value='0.20'" in slam_launch
     assert "'output_map_topic': '/map_clearance'" in slam_launch
     assert 'inflation_radius: 0.10' in nav_params
 

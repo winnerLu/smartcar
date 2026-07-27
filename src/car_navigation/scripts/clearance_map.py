@@ -67,6 +67,37 @@ def inflate_grid(
     return result
 
 
+def restore_startup_free_cells(
+        expanded: Sequence[int],
+        source: Sequence[int],
+        width: int,
+        height: int,
+        centre: Tuple[int, int],
+        offsets: Iterable[Offset],
+        occupied_threshold: int = 65) -> List[int]:
+    """Restore only originally free cells in a fixed startup escape region.
+
+    A robot can legitimately start closer to a wall than the requested global
+    clearance. Without this fixed exception, obstacle dilation can imprison
+    the start pose. Original occupied and unknown cells are never cleared, and
+    the exception does not follow the robot, so it cannot open later narrow
+    passages.
+    """
+    if len(expanded) != width * height or len(source) != width * height:
+        raise ValueError('occupancy-grid dimensions do not match data length')
+    result = list(expanded)
+    centre_x, centre_y = centre
+    for dx, dy in offsets:
+        x = centre_x + dx
+        y = centre_y + dy
+        if not (0 <= x < width and 0 <= y < height):
+            continue
+        index = y * width + x
+        if 0 <= source[index] < occupied_threshold:
+            result[index] = source[index]
+    return result
+
+
 class ClearanceMap(Node):
     """Expand the live SLAM/static map for global navigation only."""
 
@@ -76,6 +107,9 @@ class ClearanceMap(Node):
         self.declare_parameter('output_map_topic', '/map_clearance')
         self.declare_parameter('clearance_radius', 0.175)
         self.declare_parameter('occupied_threshold', 65)
+        self.declare_parameter('startup_escape_radius', 0.0)
+        self.declare_parameter('startup_x', 0.0)
+        self.declare_parameter('startup_y', 0.0)
 
         self.input_topic = str(
             self.get_parameter('input_map_topic').value)
@@ -85,8 +119,13 @@ class ClearanceMap(Node):
             0.0, float(self.get_parameter('clearance_radius').value))
         self.occupied_threshold = int(
             self.get_parameter('occupied_threshold').value)
+        self.startup_escape_radius = max(
+            0.0, float(self.get_parameter('startup_escape_radius').value))
+        self.startup_x = float(self.get_parameter('startup_x').value)
+        self.startup_y = float(self.get_parameter('startup_y').value)
         self.cached_resolution = None
         self.cached_offsets: List[Offset] = [(0, 0)]
+        self.cached_startup_offsets: List[Offset] = []
         self.last_geometry = None
 
         map_qos = QoSProfile(
@@ -101,7 +140,8 @@ class ClearanceMap(Node):
         self.get_logger().info(
             f'Hard-clearance map ready: {self.input_topic} -> '
             f'{self.output_topic}, radius={self.clearance_radius:.3f}m, '
-            f'minimum passage={2.0 * self.clearance_radius:.3f}m')
+            f'minimum passage={2.0 * self.clearance_radius:.3f}m, '
+            f'fixed startup escape={self.startup_escape_radius:.3f}m')
 
     def _map_callback(self, msg: OccupancyGrid):
         resolution = float(msg.info.resolution)
@@ -112,6 +152,9 @@ class ClearanceMap(Node):
             self.cached_resolution = resolution
             self.cached_offsets = clearance_offsets(
                 self.clearance_radius, resolution)
+            self.cached_startup_offsets = (
+                clearance_offsets(self.startup_escape_radius, resolution)
+                if self.startup_escape_radius > 0.0 else [])
 
         try:
             expanded = inflate_grid(
@@ -120,6 +163,18 @@ class ClearanceMap(Node):
                 int(msg.info.height),
                 self.cached_offsets,
                 self.occupied_threshold)
+            if self.cached_startup_offsets:
+                startup_cell = self._world_to_map(
+                    msg, self.startup_x, self.startup_y)
+                if startup_cell is not None:
+                    expanded = restore_startup_free_cells(
+                        expanded,
+                        msg.data,
+                        int(msg.info.width),
+                        int(msg.info.height),
+                        startup_cell,
+                        self.cached_startup_offsets,
+                        self.occupied_threshold)
         except ValueError as exc:
             self.get_logger().error(f'Ignoring invalid map: {exc}')
             return
@@ -138,6 +193,23 @@ class ClearanceMap(Node):
             self.get_logger().info(
                 f'Published clearance map {geometry[0]}x{geometry[1]} at '
                 f'{resolution:.3f}m/pix using {geometry[3]} dilation cells')
+
+    @staticmethod
+    def _world_to_map(
+            msg: OccupancyGrid, world_x: float, world_y: float):
+        q = msg.info.origin.orientation
+        yaw = math.atan2(
+            2.0 * (q.w * q.z + q.x * q.y),
+            1.0 - 2.0 * (q.y * q.y + q.z * q.z))
+        dx = world_x - msg.info.origin.position.x
+        dy = world_y - msg.info.origin.position.y
+        local_x = math.cos(yaw) * dx + math.sin(yaw) * dy
+        local_y = -math.sin(yaw) * dx + math.cos(yaw) * dy
+        x = int(math.floor(local_x / msg.info.resolution))
+        y = int(math.floor(local_y / msg.info.resolution))
+        if 0 <= x < msg.info.width and 0 <= y < msg.info.height:
+            return x, y
+        return None
 
 
 def main(args=None):

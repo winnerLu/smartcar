@@ -48,6 +48,25 @@ def test_inflation_marks_unknown_cells_near_an_obstacle():
     assert inflated[0] == -1
 
 
+def test_startup_escape_restores_only_original_free_cells():
+    width = 7
+    height = 7
+    source = [0] * (width * height)
+    source[3 * width + 2] = 100
+    source[2 * width + 3] = -1
+    expanded = MODULE.inflate_grid(
+        source, width, height, MODULE.clearance_offsets(0.175, 0.05))
+
+    escaped = MODULE.restore_startup_free_cells(
+        expanded, source, width, height, centre=(3, 3),
+        offsets=MODULE.clearance_offsets(0.10, 0.05))
+
+    assert escaped[3 * width + 3] == 0
+    assert escaped[3 * width + 2] == 100
+    assert escaped[2 * width + 3] == 100
+    assert escaped[3 * width + 0] == 100
+
+
 def test_invalid_grid_is_rejected():
     with pytest.raises(ValueError):
         MODULE.inflate_grid([0], 2, 2, [(0, 0)])

@@ -121,6 +121,9 @@ ros2 launch car_explore roadmap_exploration.launch.py \
   因而不会规划通过小于约 0.35m 的已建图通道。原始 `/map` 仍用于 SLAM、
   目标路径已知率和视觉泊车交接。地图分辨率为 0.05m，实测截止宽度可能有
   一个栅格左右的误差。
+- `startup_escape_radius`：SLAM 模式默认在固定初始 `(0,0)` 周围 0.20m
+  仅恢复原始地图中的自由栅格，避免靠墙起步时被硬膨胀封死；不会清除原始
+  障碍/未知栅格，也不会跟随小车移动，因此不能用来进入后续窄通道。
 - `deadend_backtrack_enabled`：停滞后优先沿实际走过的安全轨迹回退，默认
   `true`。
 - `deadend_backtrack_min_distance` / `deadend_backtrack_max_distance`：
