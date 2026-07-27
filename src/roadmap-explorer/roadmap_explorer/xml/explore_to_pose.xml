@@ -17,8 +17,11 @@
               service_name="global_costmap/clear_entirely_global_costmap"/>
           </RecoveryNode>
         </RateController>
+        <!-- Frontier poses carry an arbitrary heading. Requiring that heading
+             can make the robot rotate in place beside an obstacle after XY
+             arrival, so preserve the normal 0.15m tolerance but ignore yaw. -->
         <FollowPath path="{path}" controller_id="FollowPath"
-          goal_checker_id="goal_checker" server_timeout="2000"/>
+          goal_checker_id="roadmap_goal_checker" server_timeout="2000"/>
       </PipelineSequence>
       <ReactiveFallback name="RoadmapRecoveryFallback">
         <GoalUpdated/>

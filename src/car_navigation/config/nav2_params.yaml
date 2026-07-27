@@ -61,7 +61,7 @@ controller_server:
     min_x_velocity_threshold: 0.001
     min_theta_velocity_threshold: 0.001
     # 到点判定
-    goal_checker_plugins: ["goal_checker", "position_goal_checker"]
+    goal_checker_plugins: ["goal_checker", "roadmap_goal_checker", "position_goal_checker"]
     controller_plugins: ["FollowPath"]
     progress_checker_plugins: ["progress_checker"]
 
@@ -78,7 +78,15 @@ controller_server:
       yaw_goal_tolerance: 0.20   # 到点航向容差(rad)
       stateful: true
 
-    # 仅由Roadmap→视觉泊车专用行为树选择。小范围搜索必须真的移动，
+    # Roadmap前沿点只要求到达原有的15cm位置容差，不在贴障前沿点
+    # 为任意目标航向原地旋转。
+    roadmap_goal_checker:
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.15
+      yaw_goal_tolerance: 6.283185
+      stateful: false
+
+    # Roadmap任务节点最终驶向预泊车点时使用。小范围搜索必须真的移动，
     # 但无需为一个仅用于看Tag的临时点旋转到指定航向。
     position_goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
