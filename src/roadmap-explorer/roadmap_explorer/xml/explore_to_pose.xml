@@ -1,6 +1,9 @@
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
-    <RecoveryNode number_of_retries="4" name="RoadmapNavigateRecovery">
+    <!-- Roadmap owns frontier reselection. Keep only Nav2's low-risk clear and
+         short-backup recoveries here; repeated alternating spins beside an
+         obstacle do not make an unreachable frontier reachable. -->
+    <RecoveryNode number_of_retries="2" name="RoadmapNavigateRecovery">
       <PipelineSequence name="NavigateWithReplanning">
         <!-- Orange Pi 4A: 1Hz avoids saturating planner_server on a growing map. -->
         <RateController hz="1.0">

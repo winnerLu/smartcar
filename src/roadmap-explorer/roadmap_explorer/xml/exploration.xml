@@ -26,9 +26,11 @@
                 </Sequence>
             </RateController>
 
-            <!-- Send nav2 goal and wait for termination. Retry this 3 times on failure. If still failing, blacklist goal. -->
+            <!-- One NavigateToPose request already runs Nav2's bounded recovery
+                 tree. If it still aborts, blacklist this frontier immediately
+                 so the next tick selects a different reachable region. -->
             <Fallback>
-                <RetryUntilSuccessful num_attempts="3">
+                <RetryUntilSuccessful num_attempts="1">
                     <SendNav2Goal allocated_frontier="{the_allocated_frontier}"/>
                 </RetryUntilSuccessful>
                 <BlacklistGoal/>

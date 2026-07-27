@@ -174,7 +174,7 @@ class RoadmapExploreMission(Node):
             'direct_path_known_ratio': 0.85,
             'direct_check_period': 1.0,
             'progressive_probe_enabled': True,
-            'exploration_stall_timeout': 12.0,
+            'exploration_stall_timeout': 20.0,
             'exploration_progress_distance': 0.10,
             'deadend_backtrack_enabled': True,
             'breadcrumb_spacing': 0.25,

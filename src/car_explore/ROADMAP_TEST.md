@@ -112,8 +112,9 @@ ros2 launch car_explore roadmap_exploration.launch.py \
 - `search_timeout`：全部视觉搜索最多 25s。
 - `progressive_probe_enabled`：是否启用 Roadmap 停滞后的目标方向渐进探测，
   默认 `true`。
-- `exploration_stall_timeout`：无位置进展多久触发恢复，默认 12s，给 Nav2
-  足够时间完成转向、清图和窄道重规划。
+- `exploration_stall_timeout`：Roadmap 未自行结束失败前沿时，任务层无位置
+  进展多久触发兜底恢复，默认 20s。每个前沿只执行一轮有界 Nav2 尝试，
+  失败后由 Roadmap 立即拉黑并重新选点，避免旧 12s 看门狗在拉黑前抢先取消。
 - `deadend_backtrack_enabled`：停滞后优先沿实际走过的安全轨迹回退，默认
   `true`。
 - `deadend_backtrack_min_distance` / `deadend_backtrack_max_distance`：

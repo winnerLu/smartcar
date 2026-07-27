@@ -112,8 +112,8 @@ def generate_launch_description():
             'progressive_probe_enabled', default_value='true',
             description='Roadmap停滞时启用目标方向渐进探测'),
         DeclareLaunchArgument(
-            'exploration_stall_timeout', default_value='12.0',
-            description='探索阶段无位置进展多久后触发渐进探测(s)'),
+            'exploration_stall_timeout', default_value='20.0',
+            description='Roadmap未自行结束失败前沿时，任务层无位置进展看门狗(s)'),
         DeclareLaunchArgument(
             'deadend_backtrack_enabled', default_value='true',
             description='停滞时优先沿已走安全轨迹退出死胡同'),

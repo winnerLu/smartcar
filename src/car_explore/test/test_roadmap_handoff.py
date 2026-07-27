@@ -138,6 +138,44 @@ def test_progressive_probe_runtime_wiring_is_conservative():
     assert "'exploration_stall_timeout'" in launch
 
 
+def test_roadmap_failure_reselection_has_single_owner():
+    workspace_src = Path(__file__).parents[2]
+    params = (
+        workspace_src / 'car_explore' / 'config' /
+        'roadmap_explorer.yaml'
+    ).read_text()
+    mission = (
+        workspace_src / 'car_explore' / 'scripts' /
+        'roadmap_explore_mission.py'
+    ).read_text()
+    launch = (
+        workspace_src / 'car_explore' / 'launch' /
+        'roadmap_exploration.launch.py'
+    ).read_text()
+    exploration_tree = ET.parse(
+        workspace_src / 'roadmap-explorer' / 'roadmap_explorer' /
+        'xml' / 'exploration.xml'
+    ).getroot()
+    navigation_tree = ET.parse(
+        workspace_src / 'roadmap-explorer' / 'roadmap_explorer' /
+        'xml' / 'explore_to_pose.xml'
+    ).getroot()
+
+    retry = exploration_tree.find('.//RetryUntilSuccessful')
+    assert retry is not None
+    assert retry.attrib['num_attempts'] == '1'
+    assert exploration_tree.find('.//BlacklistGoal') is not None
+
+    recovery = navigation_tree.find('.//RecoveryNode')
+    assert recovery is not None
+    assert recovery.attrib['number_of_retries'] == '2'
+
+    assert 'bt_sleep_ms: 250' in params
+    assert 'exploration_stall_timeout: 20.0' in params
+    assert "'exploration_stall_timeout': 20.0" in mission
+    assert "'exploration_stall_timeout', default_value='20.0'" in launch
+
+
 def test_initial_known_path_skips_roadmap_before_nav2_handoff():
     mission = (
         Path(__file__).parents[1]

@@ -69,7 +69,8 @@ roadmap_explorer_node:
       heading_cost_weight: 0.7
 
     explorationBT:
-      bt_sleep_ms: 100
+      # 4Hz轮询已足够响应Nav2结果；降低Roadmap主循环空转，给SLAM和规划器留CPU。
+      bt_sleep_ms: 250
       # 20m x 20m 的保护边界，覆盖当前赛场且避免错误前沿无限扩张。
       exploration_boundary: [10.0, 10.0, 10.0, -10.0, -10.0, -10.0, -10.0, 10.0]
       abort_exploration_on_nav2_abort: false
@@ -170,8 +171,9 @@ roadmap_explore_mission:
     # 历史轨迹不足时才朝预泊车点做短距离已知区域探测。目标附近正在确认完整Tag时，
     # 交接判断优先于本无进展恢复，避免已经到停车板却被面包屑逻辑拉走。
     progressive_probe_enabled: true
-    # 给Nav2足够时间完成原地转向、清图和窄道绕障。
-    exploration_stall_timeout: 12.0
+    # Roadmap现在会在一次完整Nav2失败后拉黑当前前沿。20秒看门狗只在Roadmap
+    # 本身没有结束该次尝试时接管，避免旧12秒阈值恰好打断失败上报和拉黑。
+    exploration_stall_timeout: 20.0
     exploration_progress_distance: 0.10
     deadend_backtrack_enabled: true
     # 每行驶0.25m记录一个安全面包屑；停滞时沿历史轨迹回退0.6~1.2m，
