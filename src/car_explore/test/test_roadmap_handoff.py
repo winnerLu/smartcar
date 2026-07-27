@@ -300,3 +300,41 @@ def test_dwb_rotate_to_goal_tolerance_matches_precise_position_checker():
 
     assert 'xy_goal_tolerance: 0.05' in follow_path
     assert 'trans_stopped_velocity: 0.02' in follow_path
+
+
+def test_confirmed_sub_36cm_corridors_are_hard_blocked_globally():
+    workspace_src = Path(__file__).parents[2]
+    nav_params = (
+        workspace_src / 'car_navigation' / 'config' / 'nav2_params.yaml'
+    ).read_text()
+    roadmap_params = (
+        workspace_src / 'car_explore' / 'config' /
+        'roadmap_explorer.yaml'
+    ).read_text()
+
+    global_costmap = nav_params.split(
+        '# ==================== 全局代价地图', 1)[1].split(
+        '# ==================== 局部代价地图', 1)[0]
+    local_costmap = nav_params.split(
+        '# ==================== 局部代价地图', 1)[1].split(
+        '# ==================== 行为树导航器', 1)[0]
+    roadmap_costmap = roadmap_params.split(
+        'roadmap_explorer_costmap:', 1)[1].split(
+        'roadmap_explore_mission:', 1)[0]
+
+    # Global A* and Roadmap both use an 18 cm center clearance, so two
+    # opposing occupied boundaries less than about 36 cm apart overlap.
+    assert 'robot_radius: 0.18' in global_costmap
+    assert 'footprint:' not in global_costmap
+    assert 'robot_radius: 0.18' in roadmap_costmap
+    assert 'inflation_radius: 0.18' in roadmap_costmap
+
+    # The rolling local costmap must retain the measured asymmetric body.
+    # Enlarging this footprint would clear real scan returns in the safety
+    # margin as if those obstacles were part of the robot itself.
+    assert (
+        'footprint: "[[0.197, 0.093], [0.197, -0.093], '
+        '[-0.033, -0.093], [-0.033, 0.093]]"'
+    ) in local_costmap
+    assert 'footprint_padding: 0.03' in local_costmap
+    assert 'inflation_radius: 0.20' in local_costmap

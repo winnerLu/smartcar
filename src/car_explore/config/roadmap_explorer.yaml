@@ -98,9 +98,10 @@ roadmap_explorer_costmap:
       resolution: 0.05
       track_unknown_space: true
 
-      # 与 Nav2 使用同一实测不对称车身，保留 3cm 规划余量。
-      footprint: "[[0.197, 0.093], [0.197, -0.093], [-0.033, -0.093], [-0.033, 0.093]]"
-      footprint_padding: 0.03
+      # 与Nav2全局规划使用同一18cm虚拟圆半径。Roadmap在选择Frontier
+      # 之前就会把确认宽度小于约36cm的通道视为不可通行。
+      robot_radius: 0.18
+      footprint_padding: 0.0
 
       plugins: ["static_layer", "inflation_layer"]
       static_layer:
@@ -111,9 +112,8 @@ roadmap_explorer_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         enabled: true
-        # Roadmap 自身只负责筛选 Frontier，保持0.15m避免把未知边界全部过滤掉；
-        # 真正行驶仍由 Nav2 0.25m 膨胀层和完整 footprint 做碰撞约束。
-        inflation_radius: 0.15
+        # 等于虚拟规划半径，只建立硬禁区，不在其外再叠加很宽的软禁区。
+        inflation_radius: 0.18
         cost_scaling_factor: 3.0
         inflate_unknown: false
         inflate_around_unknown: false

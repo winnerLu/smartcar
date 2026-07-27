@@ -133,7 +133,9 @@ controller_server:
                 "PathAlign", "PathDist", "GoalDist"]
       # 保持DWB默认量级；完整footprint负责硬碰撞约束，避免窄道中
       # 障碍软代价压过路径跟踪，导致有全局路径却原地等待。
-      BaseObstacle.scale: 0.02
+      # 全局规划已硬性关闭窄于约36cm的通道；局部控制仍提高障碍权重，
+      # 避免在允许通行的宽路中紧贴一侧。
+      BaseObstacle.scale: 0.05
       PathAlign.scale: 32.0
       PathAlign.forward_point_distance: 0.1
       GoalAlign.scale: 24.0
@@ -155,10 +157,12 @@ global_costmap:
       publish_frequency: 1.0
       resolution: 0.05
       track_unknown_space: true
-      # 车体轮廓(实测,base_link=两轮中点。轮子在车尾:前19.7cm/后3.3cm,左右各9.3cm。
-      # 不对称:车几乎全在轮轴前方)
-      footprint: "[[0.197, 0.093], [0.197, -0.093], [-0.033, -0.093], [-0.033, 0.093]]"
-      footprint_padding: 0.02
+      # NavFn是二维点规划器，原不对称footprint因base_link靠近车尾，
+      # inscribed radius过小，仍会把窄道判为可通行。全局规划改用18cm
+      # 虚拟圆半径：确认宽度小于约36cm的通道会成为硬禁区。
+      # 局部控制继续使用真实不对称footprint做最终碰撞检查。
+      robot_radius: 0.18
+      footprint_padding: 0.0
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
@@ -177,7 +181,8 @@ global_costmap:
           obstacle_max_range: 10.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
+        # 软代价衰减稍慢，使A*在有替代路线时进一步偏好宽路。
+        cost_scaling_factor: 2.0
         inflation_radius: 0.25    # 障碍膨胀半径(m),窄道通不过时调小
 
 # ==================== 局部代价地图 ====================
@@ -214,10 +219,10 @@ local_costmap:
           obstacle_max_range: 10.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        # 窄通道由完整footprint和3cm padding提供硬边界；软膨胀不再
-        # 额外压窄Roadmap已经判定可通行的路径。
-        inflation_radius: 0.15
+        cost_scaling_factor: 2.0
+        # 局部仍使用真实footprint；20cm软膨胀只负责居中，不把附近
+        # 激光点当作车体内部清除。硬禁入由全局和Roadmap的18cm半径完成。
+        inflation_radius: 0.20
 
 # ==================== 行为树导航器 ====================
 bt_navigator:
