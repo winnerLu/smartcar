@@ -18,9 +18,9 @@
   循环，依次检查目标方向及 ±15°/±30°/±45° 的 0.35m、0.20m 短程点。
   只有终点周围已知安全且整条 Nav2 路径 100% 位于已知自由区时才会移动；
   移动后继续原 Roadmap 会话，最多发送 6 次，不使用盲目旋转或强制前进。
-- 只有停车板中心和其前方预泊车点成为已知自由区、两者间无墙，且 Nav2 能
-  规划出至少 85% 位于已知自由区的路径时，才会停止 Roadmap 探索。
-- Nav2 到达停车板中心前方约 0.35m 的预泊车点后按 XY 距离取消目标，
+- 只有停车板中心已知自由，且 Nav2 到目标的路径至少 85% 位于已知自由区、
+  最后 0.10m 路径完全已知安全时，才会沿实际可达路径反推预泊车点并停止探索。
+- Nav2 到达沿当前可达路径距停车板中心约 0.10m 的预泊车点后按 XY 距离取消目标，
   不要求车头与“起点到终点”方向一致，也不等待终点旋转。
 - 至少一个完整 Tag 的数量、位姿、内点数和重投影误差稳定 0.5s 后，才取消
   Nav2 速度所有权并启用视觉泊车。没有 Tag 时，Nav2 只在预泊车点附近执行
@@ -94,7 +94,7 @@ ros2 launch car_explore roadmap_exploration.launch.py \
   goal_forward:=3.2 \
   goal_left:=-0.6 \
   goal_radius:=0.25 \
-  preparking_distance:=0.35
+  preparking_distance:=0.10
 ```
 
 坐标定义：
@@ -102,7 +102,7 @@ ros2 launch car_explore roadmap_exploration.launch.py \
 - `goal_forward`：启动瞬间沿车头向前为正，单位 m。
 - `goal_left`：车体左侧为正、右侧为负，单位 m。
 - `goal_radius`：标称终点位置的不确定范围，同时限制搜索偏移，默认 0.25m。
-- `preparking_distance`：预泊车点到标称停车板中心的距离，默认 0.35m。
+- `preparking_distance`：沿当前可达 Nav2 路径从目标反向量取的距离，默认 0.10m。
 - `position_arrival_tolerance`：任务节点位置交接容差，默认0.06m。专用行为树
   选择 `position_goal_checker`（XY 0.05m、航向不约束），不会进入
   `RotateToGoal`；普通 Nav2 任务仍使用原 `goal_checker`。
@@ -113,8 +113,14 @@ ros2 launch car_explore roadmap_exploration.launch.py \
 - `progressive_probe_enabled`：是否启用 Roadmap 停滞后的目标方向渐进探测，
   默认 `true`。
 - `exploration_stall_timeout`：Roadmap 未自行结束失败前沿时，任务层无位置
-  进展多久触发兜底恢复，默认 20s。每个前沿只执行一轮有界 Nav2 尝试，
-  失败后由 Roadmap 立即拉黑并重新选点，避免旧 12s 看门狗在拉黑前抢先取消。
+  进展多久触发兜底恢复，默认 40s。Roadmap 专用 Nav2 树只允许清图一次，
+  不再执行后退或旋转；失败后由 Roadmap 立即拉黑并重新选点。40s 看门狗
+  仅在 Roadmap 自身没有结束尝试时才接管，避免两层恢复逻辑争夺控制权。
+- `clearance_radius`：`slam_navigation.launch.py` 将原始 `/map` 的障碍硬扩张
+  0.175m 并发布 `/map_clearance`。Roadmap 和 Nav2 全局规划共用这张地图，
+  因而不会规划通过小于约 0.35m 的已建图通道。原始 `/map` 仍用于 SLAM、
+  目标路径已知率和视觉泊车交接。地图分辨率为 0.05m，实测截止宽度可能有
+  一个栅格左右的误差。
 - `deadend_backtrack_enabled`：停滞后优先沿实际走过的安全轨迹回退，默认
   `true`。
 - `deadend_backtrack_min_distance` / `deadend_backtrack_max_distance`：

@@ -27,6 +27,7 @@ from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -39,6 +40,7 @@ def generate_launch_description():
     slam_params = LaunchConfiguration('slam_params_file')
     nav_params = LaunchConfiguration('nav_params_file')
     use_sim_time = LaunchConfiguration('use_sim_time')
+    clearance_radius = LaunchConfiguration('clearance_radius')
 
     declare_slam_params = DeclareLaunchArgument(
         'slam_params_file', default_value=default_slam_params,
@@ -49,6 +51,9 @@ def generate_launch_description():
     declare_sim_time = DeclareLaunchArgument(
         'use_sim_time', default_value='false',
         description='仿真时间(实机 false)')
+    declare_clearance_radius = DeclareLaunchArgument(
+        'clearance_radius', default_value='0.175',
+        description='全局规划硬净空半径(m)，两倍为允许的最小通道宽度')
 
     # ---- SLAM(实时建图 + map->odom)----
     slam_node = Node(
@@ -57,6 +62,21 @@ def generate_launch_description():
         name='slam_toolbox',
         output='screen',
         parameters=[slam_params, {'use_sim_time': use_sim_time}],
+    )
+
+    # /map保留给SLAM与任务判断；全局规划统一使用硬净空地图。
+    clearance_map = Node(
+        package='car_navigation',
+        executable='clearance_map.py',
+        name='clearance_map',
+        output='screen',
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'input_map_topic': '/map',
+            'output_map_topic': '/map_clearance',
+            'clearance_radius': ParameterValue(
+                clearance_radius, value_type=float),
+        }],
     )
 
     # ---- Nav2 导航栈(不含 map_server/amcl)----
@@ -76,6 +96,8 @@ def generate_launch_description():
         declare_slam_params,
         declare_nav_params,
         declare_sim_time,
+        declare_clearance_radius,
         slam_node,
+        clearance_map,
         nav2_navigation,
     ])

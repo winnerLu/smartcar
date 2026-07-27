@@ -90,7 +90,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'video_device', default_value='/dev/camera_c270'),
         DeclareLaunchArgument(
-            'preparking_distance', default_value='0.35',
+            'preparking_distance', default_value='0.10',
             description='沿当前可达Nav2路径从目标向后量取的预泊车距离(m)'),
         DeclareLaunchArgument(
             'position_arrival_tolerance', default_value='0.06',
@@ -123,7 +123,7 @@ def generate_launch_description():
             'progressive_probe_enabled', default_value='true',
             description='Roadmap停滞时启用目标方向渐进探测'),
         DeclareLaunchArgument(
-            'exploration_stall_timeout', default_value='20.0',
+            'exploration_stall_timeout', default_value='40.0',
             description='Roadmap未自行结束失败前沿时，任务层无位置进展看门狗(s)'),
         DeclareLaunchArgument(
             'deadend_backtrack_enabled', default_value='true',
@@ -183,6 +183,11 @@ def generate_launch_description():
                         goal_forward, value_type=float),
                     'goalDirected.goal_left': ParameterValue(
                         goal_left, value_type=float),
+                    # 使用car_navigation内的轻量专用树，部署时无需重新
+                    # 编译耗时很长的roadmap_explorer C++包。
+                    'explorationBT.nav2_bt_xml': os.path.join(
+                        car_navigation_share, 'behavior_trees',
+                        'navigate_to_pose_roadmap.xml'),
                 },
             ],
         ),

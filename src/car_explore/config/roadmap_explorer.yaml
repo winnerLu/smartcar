@@ -106,16 +106,17 @@ roadmap_explorer_costmap:
       plugins: ["static_layer", "inflation_layer"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
-        map_topic: "/map"
+        # 与Nav2全局规划共用0.175m硬净空地图，Roadmap不会再选择一个
+        # Nav2只能经小于0.35m窄通道抵达的frontier。
+        map_topic: "/map_clearance"
         map_subscribe_transient_local: true
         enabled: true
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         enabled: true
-        # Roadmap 自身只负责筛选 Frontier，保持0.15m避免把未知边界全部过滤掉；
-        # 真正行驶仍由 Nav2 0.25m 膨胀层和完整 footprint 做碰撞约束。
-        inflation_radius: 0.15
-        cost_scaling_factor: 3.0
+        # 输入地图已经完成硬扩张，只保留一格软边界避免重复膨胀。
+        inflation_radius: 0.05
+        cost_scaling_factor: 5.0
         inflate_unknown: false
         inflate_around_unknown: false
       always_send_full_costmap: false
@@ -136,7 +137,7 @@ roadmap_explore_mission:
     visual_parking_enabled: true
     # 先规划到停车板中心，再沿当前可达路径反向量取预泊车距离；任务节点
     # 按XY距离主动取消，不等待SimpleGoalChecker的终点航向对齐。
-    preparking_distance: 0.35
+    preparking_distance: 0.10
     # 专用position_goal_checker为0.05m；任务节点在0.06m内主动交接。
     position_arrival_tolerance: 0.06
     # launch文件会覆盖为car_navigation内已安装的绝对路径。
@@ -175,9 +176,9 @@ roadmap_explore_mission:
     # 历史轨迹不足时才朝预泊车点做短距离已知区域探测。目标附近正在确认完整Tag时，
     # 交接判断优先于本无进展恢复，避免已经到停车板却被面包屑逻辑拉走。
     progressive_probe_enabled: true
-    # Roadmap现在会在一次完整Nav2失败后拉黑当前前沿。20秒看门狗只在Roadmap
-    # 本身没有结束该次尝试时接管，避免旧12秒阈值恰好打断失败上报和拉黑。
-    exploration_stall_timeout: 20.0
+    # Roadmap专用Nav2树只清图一次，不再后退/旋转；正常失败由Roadmap先拉黑。
+    # 40秒任务层看门狗仅在Roadmap自身没有结束尝试时才做面包屑兜底。
+    exploration_stall_timeout: 40.0
     exploration_progress_distance: 0.10
     deadend_backtrack_enabled: true
     # 每行驶0.25m记录一个安全面包屑；停滞时沿历史轨迹回退0.6~1.2m，

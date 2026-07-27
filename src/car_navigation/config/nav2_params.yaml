@@ -162,6 +162,9 @@ global_costmap:
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
+        # clearance_map将原始/map障碍硬扩张0.175m；全局规划不再穿越
+        # 小于0.35m的通道。原始/map仍供SLAM和任务交接判断使用。
+        map_topic: /map_clearance
         map_subscribe_transient_local: true
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -177,8 +180,10 @@ global_costmap:
           obstacle_max_range: 10.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.25    # 障碍膨胀半径(m),窄道通不过时调小
+        # 硬净空已由/map_clearance提供；这里只保留短距离软代价，引导路径
+        # 离开硬边界，而不再次把可用通道大幅压窄。
+        cost_scaling_factor: 5.0
+        inflation_radius: 0.10
 
 # ==================== 局部代价地图 ====================
 local_costmap:

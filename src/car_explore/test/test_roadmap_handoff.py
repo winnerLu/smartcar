@@ -232,8 +232,8 @@ def test_roadmap_failure_reselection_has_single_owner():
         'xml' / 'exploration.xml'
     ).getroot()
     navigation_tree = ET.parse(
-        workspace_src / 'roadmap-explorer' / 'roadmap_explorer' /
-        'xml' / 'explore_to_pose.xml'
+        workspace_src / 'car_navigation' / 'behavior_trees' /
+        'navigate_to_pose_roadmap.xml'
     ).getroot()
 
     retry = exploration_tree.find('.//RetryUntilSuccessful')
@@ -243,12 +243,39 @@ def test_roadmap_failure_reselection_has_single_owner():
 
     recovery = navigation_tree.find('.//RecoveryNode')
     assert recovery is not None
-    assert recovery.attrib['number_of_retries'] == '2'
+    assert recovery.attrib['number_of_retries'] == '1'
+    assert navigation_tree.find('.//BackUp') is None
+    assert navigation_tree.find('.//Spin') is None
+    assert navigation_tree.find('.//ClearEntireCostmap') is not None
 
     assert 'bt_sleep_ms: 250' in params
-    assert 'exploration_stall_timeout: 20.0' in params
-    assert "'exploration_stall_timeout': 20.0" in mission
-    assert "'exploration_stall_timeout', default_value='20.0'" in launch
+    assert 'exploration_stall_timeout: 40.0' in params
+    assert "'exploration_stall_timeout': 40.0" in mission
+    assert "'exploration_stall_timeout', default_value='40.0'" in launch
+    assert "'explorationBT.nav2_bt_xml': os.path.join(" in launch
+    assert "'navigate_to_pose_roadmap.xml'" in launch
+
+
+def test_roadmap_and_nav2_share_hard_clearance_map():
+    workspace_src = Path(__file__).parents[2]
+    roadmap_params = (
+        workspace_src / 'car_explore' / 'config' /
+        'roadmap_explorer.yaml'
+    ).read_text()
+    nav_params = (
+        workspace_src / 'car_navigation' / 'config' /
+        'nav2_params.yaml'
+    ).read_text()
+    slam_launch = (
+        workspace_src / 'car_navigation' / 'launch' /
+        'slam_navigation.launch.py'
+    ).read_text()
+
+    assert 'map_topic: "/map_clearance"' in roadmap_params
+    assert 'map_topic: /map_clearance' in nav_params
+    assert "'clearance_radius', default_value='0.175'" in slam_launch
+    assert "'output_map_topic': '/map_clearance'" in slam_launch
+    assert 'inflation_radius: 0.10' in nav_params
 
 
 def test_initial_known_path_skips_roadmap_before_nav2_handoff():
@@ -303,6 +330,10 @@ def test_dynamic_preparking_is_derived_from_target_path_not_start_heading():
     assert "clearance != 'safe'" in derive
     assert 'self.preparking_pub.publish(candidate)' in derive
     assert 'preparking_candidate_radius' not in params
+    assert "'preparking_distance': 0.10" in mission
+    assert "preparking_distance', default_value='0.10'" in (
+        package / 'launch' / 'roadmap_exploration.launch.py').read_text()
+    assert 'preparking_distance: 0.10' in params
 
 
 def test_exploration_tag_handoff_precedes_stall_backtracking():
@@ -445,10 +476,9 @@ def test_normal_navigation_behavior_tree_selects_normal_goal_checker():
 def test_roadmap_navigation_ignores_arbitrary_frontier_heading():
     roadmap_tree = (
         Path(__file__).parents[2]
-        / 'roadmap-explorer'
-        / 'roadmap_explorer'
-        / 'xml'
-        / 'explore_to_pose.xml'
+        / 'car_navigation'
+        / 'behavior_trees'
+        / 'navigate_to_pose_roadmap.xml'
     )
     root = ET.parse(roadmap_tree).getroot()
     follow_path = root.find('.//FollowPath')

@@ -1,0 +1,41 @@
+<!--
+  Roadmap frontier navigation with one recovery owner.
+
+  Roadmap Explorer owns frontier blacklisting and reselection. Nav2 may clear
+  both costmaps once, but it must not physically back up or spin; otherwise
+  its recovery sequence races the mission coordinator's travelled-route
+  recovery.
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="1" name="RoadmapNavigateRecovery">
+      <PipelineSequence name="NavigateWithReplanning">
+        <RateController hz="1.0">
+          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+            <ReactiveSequence>
+              <PlannerSelector selected_planner="{selected_planner}"
+                default_planner="GridBased" topic_name="planner_selector"/>
+              <GoalUpdater input_goal="{goal}" output_goal="{updated_goal}">
+                <ComputePathToPose goal="{updated_goal}" path="{path}"
+                  planner_id="{selected_planner}" server_timeout="2000"/>
+              </GoalUpdater>
+            </ReactiveSequence>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Context"
+              service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+        <FollowPath path="{path}" controller_id="FollowPath"
+          goal_checker_id="roadmap_goal_checker" server_timeout="2000"/>
+      </PipelineSequence>
+      <ReactiveFallback name="RoadmapRecoveryFallback">
+        <GoalUpdated/>
+        <Sequence name="ClearBothCostmaps">
+          <ClearEntireCostmap name="ClearLocalCostmap-Recovery"
+            service_name="local_costmap/clear_entirely_local_costmap"/>
+          <ClearEntireCostmap name="ClearGlobalCostmap-Recovery"
+            service_name="global_costmap/clear_entirely_global_costmap"/>
+        </Sequence>
+      </ReactiveFallback>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>
