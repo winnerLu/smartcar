@@ -108,7 +108,7 @@ def test_measured_footprint_must_remain_inside_printed_board():
         0.2881, 0.2910, 0.005)
 
 
-def test_relaxed_completion_uses_footprint_overlap_not_perfect_containment():
+def test_parking_completion_requires_99_percent_footprint_overlap():
     board_orientation = (math.sqrt(0.5), -math.sqrt(0.5), 0.0, 0.0)
     footprint = [
         (0.197, 0.093), (0.197, -0.093),
@@ -118,14 +118,21 @@ def test_relaxed_completion_uses_footprint_overlap_not_perfect_containment():
         (0.082, 0.0, 0.0), board_orientation, footprint,
         0.2881, 0.2910, 0.005)
     slightly_offset = MODULE.footprint_overlap_ratio(
-        (0.107, 0.015, 0.0), board_orientation, footprint,
+        (0.107, 0.050, 0.0), board_orientation, footprint,
         0.2881, 0.2910, 0.005)
     mostly_outside = MODULE.footprint_overlap_ratio(
         (0.25, 0.0, 0.0), board_orientation, footprint,
         0.2881, 0.2910, 0.005)
     assert centred > 0.99
     assert slightly_offset >= 0.90
+    assert slightly_offset < 0.99
     assert mostly_outside < 0.50
+    assert MODULE.parking_completion_mode(
+        0.0, 0.989, 0.0, 0.025, 0.99,
+        math.radians(15.0), 0.99) is None
+    assert MODULE.parking_completion_mode(
+        0.0, 0.991, 0.0, 0.025, 0.99,
+        math.radians(15.0), 0.99) == 'inside'
 
 
 def test_oblique_board_generates_a_forward_arc():

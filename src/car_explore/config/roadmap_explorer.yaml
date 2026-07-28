@@ -203,8 +203,8 @@ roadmap_explore_mission:
     # 交接判断优先于本无进展恢复，避免已经到停车板却被面包屑逻辑拉走。
     progressive_probe_enabled: true
     # Roadmap专用Nav2树只清图一次，不再后退/旋转；正常失败由Roadmap先拉黑。
-    # 40秒任务层看门狗仅在Roadmap自身没有结束尝试时才做面包屑兜底。
-    exploration_stall_timeout: 40.0
+    # 30秒任务层看门狗仅在Roadmap自身没有结束尝试时才做面包屑兜底。
+    exploration_stall_timeout: 30.0
     exploration_progress_distance: 0.10
     deadend_backtrack_enabled: true
     # 每行驶0.25m记录一个安全面包屑；停滞时沿历史轨迹回退0.6~1.2m，

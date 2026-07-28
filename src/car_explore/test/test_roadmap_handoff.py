@@ -314,9 +314,9 @@ def test_roadmap_failure_reselection_has_single_owner():
     assert navigation_tree.find('.//ClearEntireCostmap') is not None
 
     assert 'bt_sleep_ms: 250' in params
-    assert 'exploration_stall_timeout: 40.0' in params
-    assert "'exploration_stall_timeout': 40.0" in mission
-    assert "'exploration_stall_timeout', default_value='40.0'" in launch
+    assert 'exploration_stall_timeout: 30.0' in params
+    assert "'exploration_stall_timeout': 30.0" in mission
+    assert "'exploration_stall_timeout', default_value='30.0'" in launch
     assert "'explorationBT.nav2_bt_xml': os.path.join(" in launch
     assert "'navigate_to_pose_roadmap.xml'" in launch
 

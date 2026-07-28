@@ -393,10 +393,10 @@ class BoardParker(Node):
         self.edge_tolerance = math.radians(float(
             self.declare_parameter('edge_tolerance_deg', 15.0).value))
         self.min_footprint_overlap = float(
-            self.declare_parameter('min_footprint_overlap', 0.90).value)
+            self.declare_parameter('min_footprint_overlap', 0.99).value)
         self.inside_overlap_threshold = float(
             self.declare_parameter(
-                'inside_overlap_threshold', 0.97).value)
+                'inside_overlap_threshold', 0.99).value)
         self.candidate_heading_weight = float(
             self.declare_parameter(
                 'candidate_heading_weight', 0.10).value)

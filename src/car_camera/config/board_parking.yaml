@@ -33,10 +33,12 @@ board_parker:
     min_linear: 0.018
     position_tolerance: 0.025
     edge_tolerance_deg: 15.0
-    min_footprint_overlap: 0.90
+    # 两种完成规则都要求至少99%的车体投影位于停车板内，避免位置和
+    # 航向已对齐时仍以较低重叠率提前结束泊车。
+    min_footprint_overlap: 0.99
     # If visual geometry confirms nearly the entire chassis is already on the
     # board, stop without forcing it to rotate toward one exact final heading.
-    inside_overlap_threshold: 0.97
+    inside_overlap_threshold: 0.99
     slowdown_distance: 0.10
     loss_timeout: 0.35
     max_pose_jump: 0.05
