@@ -49,7 +49,9 @@ planner_server:
     planner_plugins: ["GridBased"]
     GridBased:
       plugin: "nav2_navfn_planner/NavfnPlanner"
-      tolerance: 0.25            # 到不了精确目标时允许的误差(m)
+      # Roadmap 已将 frontier 投影到已知安全栅格；过大的容差会让
+      # NavFn 返回停在原地附近的短路径并被误判为到达。
+      tolerance: 0.05
       use_astar: true            # true=A*，用启发式搜索减少无关栅格扩展
       allow_unknown: true        # 允许穿越未知区域(探索时有用)
 
