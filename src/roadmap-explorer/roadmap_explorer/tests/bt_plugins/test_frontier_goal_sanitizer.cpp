@@ -5,6 +5,7 @@
 #include <nav2_costmap_2d/costmap_2d.hpp>
 
 #include "roadmap_explorer/FrontierGoalSanitizer.hpp"
+#include "roadmap_explorer/TransientFrontierBlacklist.hpp"
 
 namespace roadmap_explorer
 {
@@ -102,6 +103,37 @@ TEST(FrontierGoalSanitizer, UsesNearbyFreeSeedWhenRobotCellIsInflated)
 
   ASSERT_TRUE(result.valid);
   EXPECT_LT(result.projection_distance, 0.30);
+}
+
+TEST(TransientFrontierBlacklist, ReleasesOnlyAfterCostmapRevisionChanges)
+{
+  nav2_costmap_2d::Costmap2D costmap(
+    10, 10, 0.1, 0.0, 0.0, nav2_costmap_2d::FREE_SPACE);
+  const auto initial_revision = costmapRevision(costmap);
+  auto frontier = std::make_shared<Frontier>();
+  TransientFrontierBlacklist blacklist;
+
+  blacklist.add(frontier, initial_revision);
+  ASSERT_EQ(blacklist.frontiers().size(), 1u);
+  EXPECT_FALSE(blacklist.releaseIfMapChanged(initial_revision));
+  EXPECT_EQ(blacklist.frontiers().size(), 1u);
+
+  costmap.setCost(5, 5, nav2_costmap_2d::LETHAL_OBSTACLE);
+  const auto updated_revision = costmapRevision(costmap);
+  ASSERT_NE(initial_revision, updated_revision);
+  EXPECT_TRUE(blacklist.releaseIfMapChanged(updated_revision));
+  EXPECT_TRUE(blacklist.frontiers().empty());
+}
+
+TEST(TransientFrontierBlacklist, CostmapResizeChangesRevision)
+{
+  nav2_costmap_2d::Costmap2D costmap(
+    10, 10, 0.1, 0.0, 0.0, nav2_costmap_2d::FREE_SPACE);
+  const auto initial_revision = costmapRevision(costmap);
+
+  costmap.resizeMap(20, 10, 0.1, -0.5, 0.0);
+
+  EXPECT_NE(initial_revision, costmapRevision(costmap));
 }
 
 }  // namespace roadmap_explorer

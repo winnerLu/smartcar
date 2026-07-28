@@ -20,6 +20,7 @@
 */
 
 #include <roadmap_explorer/ExplorationBT.hpp>
+#include "roadmap_explorer/TransientFrontierBlacklist.hpp"
 
 namespace roadmap_explorer
 {
@@ -188,6 +189,10 @@ bool RoadmapExplorationBT::makeBTNodes()
   blackboard->set<std::shared_ptr<std::vector<FrontierPtr>>>(
     "blacklisted_frontiers",
     std::make_shared<std::vector<FrontierPtr>>());
+  blackboard->set<std::shared_ptr<TransientFrontierBlacklist>>(
+    "transient_blacklisted_frontiers",
+    std::make_shared<TransientFrontierBlacklist>());
+  blackboard->set<bool>("latest_failed_frontier_is_transient", false);
 
   {
     /*

@@ -78,7 +78,7 @@ namespace roadmap_explorer
         getInput("allocated_frontier", allocatedFrontier);
         geometry_msgs::msg::PoseStamped goalPose;
         if (!makeSafeGoal(allocatedFrontier, goalPose)) {
-        markFrontierFailed(allocatedFrontier);
+        markFrontierFailed(allocatedFrontier, true);
         return BT::NodeStatus::FAILURE;
         }
         if (!nav2_interface_->canSendNewGoal()) {
@@ -93,7 +93,7 @@ namespace roadmap_explorer
         else
         {
         if (!nav2_interface_->sendGoal(goalPose)) {
-            markFrontierFailed(allocatedFrontier);
+            markFrontierFailed(allocatedFrontier, false);
             return BT::NodeStatus::FAILURE;
         }
         last_sent_goal_ = goalPose;
@@ -117,7 +117,7 @@ namespace roadmap_explorer
         geometry_msgs::msg::PoseStamped goalPose;
         if (!makeSafeGoal(allocatedFrontier, goalPose)) {
             LOG_WARN("The active frontier no longer has a safe goal; cancelling the old Nav2 path");
-            markFrontierFailed(allocatedFrontier);
+            markFrontierFailed(allocatedFrontier, true);
             nav2_interface_->cancelAllGoals();
             cancel_due_to_invalid_goal_ = true;
             return BT::NodeStatus::RUNNING;
@@ -150,7 +150,7 @@ namespace roadmap_explorer
         nav2_interface_->getGoalStatus() == NavGoalStatus::CANCELLED ||
         nav2_interface_->getGoalStatus() == NavGoalStatus::REJECTED)
         {
-        markFrontierFailed(allocatedFrontier);
+        markFrontierFailed(allocatedFrontier, cancel_due_to_invalid_goal_);
         return BT::NodeStatus::FAILURE;
         }
         if (nav2_interface_->getGoalStatus() == NavGoalStatus::FAILED) {
@@ -192,12 +192,14 @@ namespace roadmap_explorer
     double max_projection_distance_{0.60};
     double robot_seed_search_radius_{0.30};
 
-    void markFrontierFailed(const FrontierPtr & frontier)
+    void markFrontierFailed(const FrontierPtr & frontier, bool transient)
     {
         config().blackboard->set<ExplorationErrorCode>(
             "error_code_id", ExplorationErrorCode::NAV2_GOAL_ABORT);
         config().blackboard->set<FrontierPtr>(
             "latest_failed_frontier", frontier);
+        config().blackboard->set<bool>(
+            "latest_failed_frontier_is_transient", transient);
     }
 
     bool makeSafeGoal(
@@ -222,11 +224,11 @@ namespace roadmap_explorer
             boundary_margin_, max_projection_distance_, robot_seed_search_radius_);
         if (!projection.valid) {
         LOG_WARN(
-            "Rejecting frontier before Nav2 dispatch: reference=(" <<
+            "Temporarily rejecting frontier before Nav2 dispatch: reference=(" <<
             frontier->getGoalPoint().x << ", " << frontier->getGoalPoint().y <<
             "), no reachable known-free cell within " <<
             max_projection_distance_ << "m and " << boundary_margin_ <<
-            "m map-edge margin");
+            "m map-edge margin; it will be retried after the costmap changes");
         return false;
         }
 

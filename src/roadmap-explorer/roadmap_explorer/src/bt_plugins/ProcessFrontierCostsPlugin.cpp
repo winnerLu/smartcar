@@ -22,6 +22,9 @@
 #include "roadmap_explorer/bt_plugins/ProcessFrontierCostsPlugin.hpp"
 #include "roadmap_explorer/CostAssigner.hpp"
 #include "roadmap_explorer/Parameters.hpp"
+#include "roadmap_explorer/TransientFrontierBlacklist.hpp"
+
+#include <mutex>
 #include <pluginlib/class_list_macros.hpp>
 #include <geometry_msgs/msg/polygon_stamped.hpp>
 
@@ -52,6 +55,23 @@ namespace roadmap_explorer
         frontierCostsRequestPtr->prohibited_frontiers =
         *(config().blackboard->get<std::shared_ptr<std::vector<FrontierPtr>>>(
             "blacklisted_frontiers"));
+        auto transient_blacklist =
+        config().blackboard->get<std::shared_ptr<TransientFrontierBlacklist>>(
+            "transient_blacklisted_frontiers");
+        if (explore_costmap_ros_) {
+        auto * costmap = explore_costmap_ros_->getCostmap();
+        std::unique_lock<nav2_costmap_2d::Costmap2D::mutex_t> lock(
+            *(costmap->getMutex()));
+        if (transient_blacklist->releaseIfMapChanged(costmapRevision(*costmap))) {
+            LOG_WARN(
+            "Exploration costmap changed; releasing temporarily rejected "
+            "frontiers for validation");
+        }
+        }
+        const auto & transient_frontiers = transient_blacklist->frontiers();
+        frontierCostsRequestPtr->prohibited_frontiers.insert(
+        frontierCostsRequestPtr->prohibited_frontiers.end(),
+        transient_frontiers.begin(), transient_frontiers.end());
 
         if (!getInput<std::vector<FrontierPtr>>(
             "frontier_list",
