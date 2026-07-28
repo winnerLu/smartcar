@@ -121,8 +121,9 @@ roadmap_explorer_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         enabled: true
-        # 输入地图只封闭窄通道；保留一格软边界。
-        inflation_radius: 0.05
+        # Roadmap 目标选择也保留软安全边界，且半径大于车体内切
+        # 半径，避免把 frontier 投影到贴墙位置。
+        inflation_radius: 0.12
         cost_scaling_factor: 5.0
         inflate_unknown: false
         inflate_around_unknown: false
