@@ -319,6 +319,7 @@ def test_four_minute_fallback_is_bounded_safe_and_single_owner():
     assert "'timeout_fallback': 'TIMEOUT_FALLBACK_NAVIGATION'" in mission
     assert "'CANCELING_EXPLORATION_FOR_TIMEOUT_FALLBACK'" in mission
     assert "self._cancel_active_nav('timeout_fallback')" in mission
+    assert 'not self.timeout_fallback_triggered and' in mission
     assert 'self._safe_search_point(world)' in mission
     assert 'self.timeout_fallback_known_ratio' in mission
     assert 'sample_stride=1' in mission

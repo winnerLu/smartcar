@@ -511,7 +511,9 @@ class RoadmapExploreMission(Node):
         if self._timeout_fallback_due(now):
             self._begin_timeout_fallback()
             return
-        if (self.mission_timeout > 0.0 and self.mission_start_time > 0.0 and
+        if (not self.timeout_fallback_triggered and
+                self.mission_timeout > 0.0 and
+                self.mission_start_time > 0.0 and
                 now - self.mission_start_time >= self.mission_timeout):
             self._abort_mission('Mission timeout reached before the target became reachable')
             return
