@@ -34,6 +34,7 @@ from roadmap_handoff import (
     startup_escape_metrics,
     tag_observation_valid,
     target_reveal_points,
+    timeout_fallback_due,
 )
 
 
@@ -160,6 +161,10 @@ class RoadmapExploreMission(Node):
         self.target_reveal_plan_candidate: Optional[PoseStamped] = None
         self.target_reveal_attempts = 0
         self.target_reveal_settle_start_time = 0.0
+        self.timeout_fallback_triggered = False
+        self.timeout_fallback_candidates: List[PoseStamped] = []
+        self.timeout_fallback_index = 0
+        self.timeout_fallback_plan_candidate: Optional[PoseStamped] = None
         self.startup_escape_start: Optional[Tuple[float, float, float]] = None
         self.startup_escape_start_time = 0.0
         self.startup_escape_settle_start_time = 0.0
@@ -247,6 +252,10 @@ class RoadmapExploreMission(Node):
             'target_local_reveal_known_ratio': 1.0,
             'target_local_reveal_settle_time': 1.5,
             'target_local_reveal_max_attempts': 3,
+            'timeout_fallback_enabled': True,
+            'timeout_fallback_after': 240.0,
+            'timeout_fallback_radius': 0.30,
+            'timeout_fallback_known_ratio': 1.0,
             'mission_timeout': 300.0,
             'free_threshold': 20,
             'occupied_threshold': 65,
@@ -311,6 +320,10 @@ class RoadmapExploreMission(Node):
                 'target_local_reveal_known_ratio',
                 'target_local_reveal_settle_time',
                 'target_local_reveal_max_attempts',
+                'timeout_fallback_enabled',
+                'timeout_fallback_after',
+                'timeout_fallback_radius',
+                'timeout_fallback_known_ratio',
                 'mission_timeout', 'free_threshold', 'occupied_threshold',
                 'endpoint_clearance'):
             setattr(self, name, self.get_parameter(name).value)
@@ -440,6 +453,14 @@ class RoadmapExploreMission(Node):
             0.0, float(self.target_local_reveal_settle_time))
         self.target_local_reveal_max_attempts = max(
             1, int(self.target_local_reveal_max_attempts))
+        self.timeout_fallback_enabled = bool(
+            self.timeout_fallback_enabled)
+        self.timeout_fallback_after = max(
+            0.0, float(self.timeout_fallback_after))
+        self.timeout_fallback_radius = max(
+            0.05, float(self.timeout_fallback_radius))
+        self.timeout_fallback_known_ratio = min(
+            1.0, max(0.0, float(self.timeout_fallback_known_ratio)))
         self.mission_timeout = float(self.mission_timeout)
         self.free_threshold = int(self.free_threshold)
         self.occupied_threshold = int(self.occupied_threshold)
@@ -487,6 +508,9 @@ class RoadmapExploreMission(Node):
             return
         if self.state in ('COMPLETE', 'FAILED'):
             return
+        if self._timeout_fallback_due(now):
+            self._begin_timeout_fallback()
+            return
         if (self.mission_timeout > 0.0 and self.mission_start_time > 0.0 and
                 now - self.mission_start_time >= self.mission_timeout):
             self._abort_mission('Mission timeout reached before the target became reachable')
@@ -521,7 +545,8 @@ class RoadmapExploreMission(Node):
         if self.state in (
                 'FINAL_NAVIGATION', 'SEARCH_NAVIGATION',
                 'PROBE_NAVIGATION', 'BACKTRACK_NAVIGATION',
-                'TARGET_REVEAL_NAVIGATION'):
+                'TARGET_REVEAL_NAVIGATION',
+                'TIMEOUT_FALLBACK_NAVIGATION'):
             if (self.state not in (
                     'PROBE_NAVIGATION', 'BACKTRACK_NAVIGATION') and
                     self.visual_parking_enabled and
@@ -975,6 +1000,82 @@ class RoadmapExploreMission(Node):
         self.get_logger().info(
             'Camera capture is asleep during Roadmap exploration')
 
+    def _timeout_fallback_due(self, now: float) -> bool:
+        if (not self.goal_directed_mode or
+                not self.timeout_fallback_enabled or
+                self.timeout_fallback_triggered or
+                self.mission_start_time <= 0.0 or
+                self.target_pose is None or
+                self.plan_in_progress or
+                self.state in (
+                    'STARTING', 'STARTUP_ESCAPE',
+                    'STARTUP_ESCAPE_SETTLE',
+                    'SENDING_EXPLORATION',
+                    'SENDING_FINAL_NAVIGATION',
+                    'SENDING_SEARCH_NAVIGATION',
+                    'SENDING_PROBE_NAVIGATION',
+                    'SENDING_BACKTRACK_NAVIGATION',
+                    'SENDING_TARGET_REVEAL_NAVIGATION',
+                    'CANCELING_EXPLORATION',
+                    'CANCELING_EXPLORATION_FOR_TAG',
+                    'CANCELING_EXPLORATION_FOR_PROBE',
+                    'CANCELING_EXPLORATION_FOR_TIMEOUT_FALLBACK',
+                    'CANCELING_NAV', 'ACTIVATING_CAMERA',
+                    'ACTIVATING_PARKING',
+                    'VISUAL_PARKING', 'COMPLETE', 'FAILED',
+                    'PLANNING_TIMEOUT_FALLBACK',
+                    'SENDING_TIMEOUT_FALLBACK_NAVIGATION',
+                    'TIMEOUT_FALLBACK_NAVIGATION')):
+            return False
+
+        robot = self._robot_pose()
+        if robot is None:
+            return False
+        target = self.target_pose.pose.position
+        target_distance = math.hypot(
+            target.x - robot[0], target.y - robot[1])
+        searching_states = {
+            'EXPLORING',
+            'PLANNING_TARGET_REVEAL',
+            'TARGET_REVEAL_SETTLE',
+            'PLANNING_TARGET_REVEAL_HANDOFF',
+            'PLANNING_BACKTRACK',
+            'BACKTRACK_NAVIGATION',
+            'PLANNING_PROBE',
+            'PROBE_NAVIGATION',
+            'PROBE_SETTLE',
+            'TAG_ACQUISITION',
+            'SEARCH_WAIT',
+            'SEARCH_NAVIGATION',
+            'TARGET_REVEAL_NAVIGATION',
+        }
+        return timeout_fallback_due(
+            now - self.mission_start_time,
+            self.timeout_fallback_after,
+            target_distance,
+            self.timeout_fallback_radius,
+            self.state in searching_states)
+
+    def _begin_timeout_fallback(self):
+        """Stop the current owner before bounded direct Nav2 takes over."""
+        self.timeout_fallback_triggered = True
+        elapsed = self._now_seconds() - self.mission_start_time
+        self.get_logger().warning(
+            f'Mission has run for {elapsed:.1f}s without completing the '
+            'target handoff; starting the one-shot timeout fallback to a '
+            f'known-safe point within {self.timeout_fallback_radius:.2f}m '
+            'of the target')
+
+        if self.explore_goal_handle is not None:
+            self.state = 'CANCELING_EXPLORATION_FOR_TIMEOUT_FALLBACK'
+            future = self.explore_goal_handle.cancel_goal_async()
+            future.add_done_callback(self._explore_cancel_done)
+            return
+        if self.final_goal_handle is not None:
+            self._cancel_active_nav('timeout_fallback')
+            return
+        self._prepare_timeout_fallback()
+
     def _maybe_warm_camera_near_target(self):
         if (not self.visual_parking_enabled or
                 self.camera_capture_enabled or
@@ -1079,6 +1180,20 @@ class RoadmapExploreMission(Node):
                 'Roadmap exploration is stopped; selecting a known-safe '
                 'trajectory recovery')
             self._prepare_stall_recovery()
+            return
+
+        if self.state == 'CANCELING_EXPLORATION_FOR_TIMEOUT_FALLBACK':
+            if wrapped.status not in (
+                    GoalStatus.STATUS_CANCELED,
+                    GoalStatus.STATUS_SUCCEEDED):
+                self._abort_mission(
+                    'Roadmap exploration did not stop cleanly before the '
+                    f'timeout fallback (status={wrapped.status})')
+                return
+            self.get_logger().info(
+                'Roadmap exploration and its Nav2 goal are fully stopped; '
+                'selecting the bounded final fallback point')
+            self._prepare_timeout_fallback()
             return
 
         if self.state in ('FINAL_NAVIGATION', 'COMPLETE', 'FAILED'):
@@ -1193,10 +1308,167 @@ class RoadmapExploreMission(Node):
             self.get_logger().info(
                 'Roadmap exploration accepted cancellation; waiting for its '
                 'Nav2 goal to terminate before progressive probing')
+        elif self.state == 'CANCELING_EXPLORATION_FOR_TIMEOUT_FALLBACK':
+            self.get_logger().info(
+                'Roadmap exploration accepted cancellation; waiting for its '
+                'Nav2 goal to terminate before timeout fallback navigation')
         else:
             self.get_logger().info(
                 'Roadmap exploration accepted cancellation; waiting for its '
                 'Nav2 goal to terminate before final navigation')
+
+    def _prepare_timeout_fallback(self):
+        """Find safe mapped endpoints no farther than the configured radius."""
+        if self.latest_map is None or self.target_pose is None:
+            self._abort_mission(
+                'Timeout fallback cannot start without a map and target pose')
+            return
+        robot = self._robot_pose()
+        if robot is None:
+            self._abort_mission(
+                'Timeout fallback cannot start without the robot pose')
+            return
+
+        msg = self.latest_map
+        target = self.target_pose.pose.position
+        target_cell = self._world_to_map(msg, target.x, target.y)
+        if target_cell is None:
+            self._abort_mission(
+                'No known-safe timeout fallback point exists within '
+                f'{self.timeout_fallback_radius:.2f}m: target is outside map')
+            return
+
+        cell_radius = max(
+            1, math.ceil(
+                self.timeout_fallback_radius / msg.info.resolution))
+        candidates = []
+        for mx in range(
+                target_cell[0] - cell_radius,
+                target_cell[0] + cell_radius + 1):
+            for my in range(
+                    target_cell[1] - cell_radius,
+                    target_cell[1] + cell_radius + 1):
+                world = self._map_to_world(msg, mx, my)
+                if world is None:
+                    continue
+                target_distance = math.hypot(
+                    world[0] - target.x, world[1] - target.y)
+                if target_distance > self.timeout_fallback_radius + 1e-9:
+                    continue
+                if not self._safe_search_point(world):
+                    continue
+                robot_distance = math.hypot(
+                    world[0] - robot[0], world[1] - robot[1])
+                candidates.append((
+                    target_distance, robot_distance, world))
+
+        candidates.sort(key=lambda item: (item[0], item[1]))
+        self.timeout_fallback_candidates = [
+            self._make_pose(point[0], point[1], robot[2])
+            for _, _, point in candidates
+        ]
+        self.timeout_fallback_index = 0
+        self.timeout_fallback_plan_candidate = None
+        self.get_logger().warning(
+            f'Timeout fallback found '
+            f'{len(self.timeout_fallback_candidates)} known-safe endpoint '
+            f'candidates within {self.timeout_fallback_radius:.2f}m of the '
+            'target; checking Nav2 reachability nearest-to-target first')
+        self._send_next_timeout_fallback_candidate()
+
+    def _send_next_timeout_fallback_candidate(self):
+        while self.timeout_fallback_index < len(
+                self.timeout_fallback_candidates):
+            index = self.timeout_fallback_index
+            candidate = self.timeout_fallback_candidates[index]
+            self.timeout_fallback_index += 1
+            self.get_logger().info(
+                f'Checking timeout fallback candidate {index + 1}/'
+                f'{len(self.timeout_fallback_candidates)}: '
+                f'({candidate.pose.position.x:.2f}, '
+                f'{candidate.pose.position.y:.2f})')
+            self._request_timeout_fallback_plan(candidate)
+            return
+        self._abort_mission(
+            'No known-safe point within '
+            f'{self.timeout_fallback_radius:.2f}m of the target has a fully '
+            'known Nav2 path')
+
+    def _request_timeout_fallback_plan(self, candidate: PoseStamped):
+        self.plan_in_progress = True
+        self.timeout_fallback_plan_candidate = candidate
+        self.state = 'PLANNING_TIMEOUT_FALLBACK'
+        goal = ComputePathToPose.Goal()
+        goal.goal = candidate
+        goal.planner_id = str(self.planner_id)
+        goal.use_start = False
+        future = self.plan_client.send_goal_async(goal)
+        future.add_done_callback(
+            self._timeout_fallback_plan_goal_response)
+
+    def _timeout_fallback_plan_goal_response(self, future):
+        try:
+            goal_handle = future.result()
+        except Exception as exc:
+            self.plan_in_progress = False
+            self.get_logger().warning(
+                f'Timeout fallback planning request failed: {exc}')
+            self._send_next_timeout_fallback_candidate()
+            return
+        if self.state != 'PLANNING_TIMEOUT_FALLBACK':
+            if goal_handle.accepted:
+                goal_handle.cancel_goal_async()
+            self.plan_in_progress = False
+            return
+        if not goal_handle.accepted:
+            self.plan_in_progress = False
+            self.get_logger().warning(
+                'Nav2 rejected one timeout fallback plan request')
+            self._send_next_timeout_fallback_candidate()
+            return
+        goal_handle.get_result_async().add_done_callback(
+            self._timeout_fallback_plan_result)
+
+    def _timeout_fallback_plan_result(self, future):
+        self.plan_in_progress = False
+        if self.state != 'PLANNING_TIMEOUT_FALLBACK':
+            return
+        try:
+            wrapped = future.result()
+        except Exception as exc:
+            self.get_logger().warning(
+                f'Timeout fallback planning result failed: {exc}')
+            self._send_next_timeout_fallback_candidate()
+            return
+        if (wrapped.status != GoalStatus.STATUS_SUCCEEDED or
+                not wrapped.result.path.poses):
+            self.get_logger().warning(
+                'Timeout fallback candidate has no Nav2 path')
+            self._send_next_timeout_fallback_candidate()
+            return
+        known_ratio = self._known_path_ratio(
+            wrapped.result.path, sample_stride=1)
+        if known_ratio + 1e-9 < self.timeout_fallback_known_ratio:
+            self.get_logger().warning(
+                f'Timeout fallback path is only '
+                f'{known_ratio * 100.0:.0f}% known; trying another endpoint')
+            self._send_next_timeout_fallback_candidate()
+            return
+        candidate = self.timeout_fallback_plan_candidate
+        if candidate is None:
+            self._abort_mission(
+                'Timeout fallback candidate pose is missing')
+            return
+        self.final_candidate = candidate
+        target = self.target_pose.pose.position
+        target_distance = math.hypot(
+            candidate.pose.position.x - target.x,
+            candidate.pose.position.y - target.y)
+        self.get_logger().warning(
+            f'Dispatching one-shot timeout fallback with Nav2: endpoint is '
+            f'{target_distance:.2f}m from target and path is '
+            f'{known_ratio * 100.0:.0f}% known')
+        self._send_nav_goal(candidate, 'timeout_fallback')
 
     def _reset_exploration_watchdog(self):
         now = self._now_seconds()
@@ -1938,6 +2210,7 @@ class RoadmapExploreMission(Node):
             'probe': 'SENDING_PROBE_NAVIGATION',
             'backtrack': 'SENDING_BACKTRACK_NAVIGATION',
             'reveal': 'SENDING_TARGET_REVEAL_NAVIGATION',
+            'timeout_fallback': 'SENDING_TIMEOUT_FALLBACK_NAVIGATION',
         }
         if purpose not in sending_states:
             self._abort_mission(f'Unknown Nav2 mission purpose: {purpose}')
@@ -2005,6 +2278,14 @@ class RoadmapExploreMission(Node):
                 self.active_nav_target = None
                 self.active_nav_purpose = None
                 self._send_next_target_reveal_candidate()
+            elif self.active_nav_purpose == 'timeout_fallback':
+                self.get_logger().warning(
+                    'Nav2 rejected one timeout fallback goal; trying another '
+                    'known-safe endpoint near the target')
+                self.final_goal_handle = None
+                self.active_nav_target = None
+                self.active_nav_purpose = None
+                self._send_next_timeout_fallback_candidate()
             else:
                 self._abort_mission('Nav2 rejected the pre-parking goal')
             return
@@ -2019,6 +2300,7 @@ class RoadmapExploreMission(Node):
             'probe': 'PROBE_NAVIGATION',
             'backtrack': 'BACKTRACK_NAVIGATION',
             'reveal': 'TARGET_REVEAL_NAVIGATION',
+            'timeout_fallback': 'TIMEOUT_FALLBACK_NAVIGATION',
         }
         self.state = active_states[purpose]
         self.get_logger().info(
@@ -2063,6 +2345,13 @@ class RoadmapExploreMission(Node):
         self.active_nav_purpose = None
         self.nav_cancel_reason = None
         if self.state in ('FAILED', 'COMPLETE'):
+            return
+
+        if cancel_reason == 'timeout_fallback':
+            self.get_logger().info(
+                'Previous Nav2 mission motion is fully stopped; selecting '
+                'the bounded timeout fallback endpoint')
+            self._prepare_timeout_fallback()
             return
 
         if purpose == 'approach':
@@ -2138,6 +2427,24 @@ class RoadmapExploreMission(Node):
                     f'Target-local reveal Nav2 goal failed with status '
                     f'{status}; trying another known-safe viewpoint')
                 self._send_next_target_reveal_candidate()
+            return
+
+        if purpose == 'timeout_fallback':
+            tag_seen = cancel_reason == 'tag_confirmed'
+            if (status == GoalStatus.STATUS_SUCCEEDED or
+                    cancel_reason == 'position_reached' or tag_seen):
+                if self.visual_parking_enabled:
+                    self._start_tag_acquisition(after_search=False)
+                else:
+                    self.state = 'COMPLETE'
+                    self.get_logger().info(
+                        'Goal-directed mission complete at the timeout '
+                        'fallback endpoint')
+            else:
+                self.get_logger().warning(
+                    f'Timeout fallback Nav2 goal failed with status {status}; '
+                    'trying another known-safe endpoint near the target')
+                self._send_next_timeout_fallback_candidate()
             return
 
         self._abort_mission('Received a Nav2 result with no mission purpose')

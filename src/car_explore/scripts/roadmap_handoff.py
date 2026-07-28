@@ -12,6 +12,20 @@ def wrap_angle(angle: float) -> float:
     return (float(angle) + math.pi) % (2.0 * math.pi) - math.pi
 
 
+def timeout_fallback_due(
+        elapsed: float, timeout: float, target_distance: float,
+        target_radius: float, still_searching: bool) -> bool:
+    """Decide whether the bounded final Nav2 fallback should take ownership."""
+    return (
+        float(timeout) > 0.0 and
+        float(elapsed) + 1e-9 >= float(timeout) and
+        (
+            bool(still_searching) or
+            float(target_distance) > max(0.0, float(target_radius))
+        )
+    )
+
+
 def startup_escape_metrics(
         start: Tuple[float, float, float],
         current: Tuple[float, float, float]) -> Tuple[float, float, float]:

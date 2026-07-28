@@ -235,6 +235,13 @@ roadmap_explore_mission:
     target_local_reveal_known_ratio: 1.0
     target_local_reveal_settle_time: 1.5
     target_local_reveal_max_attempts: 3
+    # 运行4分钟仍在探索/搜索，或仍未进入目标0.30m范围时，只触发一次：
+    # 先完整停止Roadmap或当前Nav2目标，再从/map中筛选目标0.30m内已知、
+    # 有净空且Nav2路径100%已知的安全点，按离目标由近到远尝试直达。
+    timeout_fallback_enabled: true
+    timeout_fallback_after: 240.0
+    timeout_fallback_radius: 0.30
+    timeout_fallback_known_ratio: 1.0
     mission_timeout: 300.0
     free_threshold: 20
     occupied_threshold: 65

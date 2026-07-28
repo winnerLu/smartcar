@@ -13,6 +13,25 @@ HANDOFF = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(HANDOFF)
 
 
+def test_timeout_fallback_requires_deadline_and_distance_or_search():
+    assert not HANDOFF.timeout_fallback_due(
+        elapsed=239.9, timeout=240.0,
+        target_distance=2.0, target_radius=0.30,
+        still_searching=True)
+    assert HANDOFF.timeout_fallback_due(
+        elapsed=240.0, timeout=240.0,
+        target_distance=0.80, target_radius=0.30,
+        still_searching=False)
+    assert HANDOFF.timeout_fallback_due(
+        elapsed=241.0, timeout=240.0,
+        target_distance=0.20, target_radius=0.30,
+        still_searching=True)
+    assert not HANDOFF.timeout_fallback_due(
+        elapsed=241.0, timeout=240.0,
+        target_distance=0.20, target_radius=0.30,
+        still_searching=False)
+
+
 def test_startup_escape_progress_is_measured_along_original_heading():
     progress, lateral, heading_error = HANDOFF.startup_escape_metrics(
         (1.0, 2.0, math.pi / 2.0),
@@ -276,6 +295,35 @@ def test_progressive_probe_runtime_wiring_is_conservative():
     assert 'sample_stride=1' in mission
     assert "'progressive_probe_enabled'" in launch
     assert "'exploration_stall_timeout'" in launch
+
+
+def test_four_minute_fallback_is_bounded_safe_and_single_owner():
+    package = Path(__file__).parents[1]
+    params = (
+        package / 'config' / 'roadmap_explorer.yaml'
+    ).read_text()
+    mission = (
+        package / 'scripts' / 'roadmap_explore_mission.py'
+    ).read_text()
+    launch = (
+        package / 'launch' / 'roadmap_exploration.launch.py'
+    ).read_text()
+
+    assert 'timeout_fallback_enabled: true' in params
+    assert 'timeout_fallback_after: 240.0' in params
+    assert 'timeout_fallback_radius: 0.30' in params
+    assert 'timeout_fallback_known_ratio: 1.0' in params
+    assert "'timeout_fallback_after': 240.0" in mission
+    assert "'timeout_fallback_radius': 0.30" in mission
+    assert "'timeout_fallback': 'SENDING_TIMEOUT_FALLBACK_NAVIGATION'" in mission
+    assert "'timeout_fallback': 'TIMEOUT_FALLBACK_NAVIGATION'" in mission
+    assert "'CANCELING_EXPLORATION_FOR_TIMEOUT_FALLBACK'" in mission
+    assert "self._cancel_active_nav('timeout_fallback')" in mission
+    assert 'self._safe_search_point(world)' in mission
+    assert 'self.timeout_fallback_known_ratio' in mission
+    assert 'sample_stride=1' in mission
+    assert "timeout_fallback_after', default_value='240.0'" in launch
+    assert "timeout_fallback_radius', default_value='0.30'" in launch
 
 
 def test_roadmap_failure_reselection_has_single_owner():

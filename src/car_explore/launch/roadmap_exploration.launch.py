@@ -65,6 +65,12 @@ def generate_launch_description():
         'target_local_reveal_settle_time')
     target_local_reveal_max_attempts = LaunchConfiguration(
         'target_local_reveal_max_attempts')
+    timeout_fallback_enabled = LaunchConfiguration(
+        'timeout_fallback_enabled')
+    timeout_fallback_after = LaunchConfiguration(
+        'timeout_fallback_after')
+    timeout_fallback_radius = LaunchConfiguration(
+        'timeout_fallback_radius')
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -155,6 +161,15 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'target_local_reveal_max_attempts', default_value='3',
             description='一次停滞恢复最多执行的目标局部补扫次数'),
+        DeclareLaunchArgument(
+            'timeout_fallback_enabled', default_value='true',
+            description='任务超时后停止探索并由Nav2直达目标附近安全点'),
+        DeclareLaunchArgument(
+            'timeout_fallback_after', default_value='240.0',
+            description='触发一次性目标附近Nav2兜底的任务时间(s)'),
+        DeclareLaunchArgument(
+            'timeout_fallback_radius', default_value='0.30',
+            description='兜底终点距标称目标的最大欧氏距离(m)'),
         DeclareLaunchArgument('return_to_start', default_value='false'),
         DeclareLaunchArgument('start_delay', default_value='5.0'),
         DeclareLaunchArgument(
@@ -283,6 +298,12 @@ def generate_launch_description():
                         target_local_reveal_settle_time, value_type=float),
                     'target_local_reveal_max_attempts': ParameterValue(
                         target_local_reveal_max_attempts, value_type=int),
+                    'timeout_fallback_enabled': ParameterValue(
+                        timeout_fallback_enabled, value_type=bool),
+                    'timeout_fallback_after': ParameterValue(
+                        timeout_fallback_after, value_type=float),
+                    'timeout_fallback_radius': ParameterValue(
+                        timeout_fallback_radius, value_type=float),
                 },
             ],
         ),
