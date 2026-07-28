@@ -57,6 +57,12 @@ namespace roadmap_explorer
         nav2_util::declare_parameter_if_not_declared(
             ros_node_ptr_, "explorationBT.frontier_goal_robot_seed_radius",
             rclcpp::ParameterValue(0.30));
+        nav2_util::declare_parameter_if_not_declared(
+            ros_node_ptr_, "explorationBT.frontier_goal_noop_distance",
+            rclcpp::ParameterValue(0.18));
+        nav2_util::declare_parameter_if_not_declared(
+            ros_node_ptr_, "explorationBT.frontier_goal_noop_min_progress",
+            rclcpp::ParameterValue(0.05));
         boundary_margin_ = std::max(
             0.0, ros_node_ptr_->get_parameter(
                 "explorationBT.frontier_goal_boundary_margin").as_double());
@@ -66,6 +72,12 @@ namespace roadmap_explorer
         robot_seed_search_radius_ = std::max(
             0.0, ros_node_ptr_->get_parameter(
                 "explorationBT.frontier_goal_robot_seed_radius").as_double());
+        noop_goal_distance_ = std::max(
+            0.0, ros_node_ptr_->get_parameter(
+                "explorationBT.frontier_goal_noop_distance").as_double());
+        noop_min_progress_ = std::max(
+            0.0, ros_node_ptr_->get_parameter(
+                "explorationBT.frontier_goal_noop_min_progress").as_double());
         LOG_INFO("SendNav2Goal Constructor");
     }
 
@@ -73,6 +85,8 @@ namespace roadmap_explorer
     {
         LOG_FLOW("SendNav2Goal onStart");
         has_last_sent_goal_ = false;
+        has_start_pose_ = false;
+        initial_goal_distance_ = std::numeric_limits<double>::infinity();
         cancel_due_to_invalid_goal_ = false;
         FrontierPtr allocatedFrontier = std::make_shared<Frontier>();
         getInput("allocated_frontier", allocatedFrontier);
@@ -80,6 +94,14 @@ namespace roadmap_explorer
         if (!makeSafeGoal(allocatedFrontier, goalPose)) {
         markFrontierFailed(allocatedFrontier);
         return BT::NodeStatus::FAILURE;
+        }
+        if (explore_costmap_ros_ &&
+            explore_costmap_ros_->getRobotPose(start_pose_))
+        {
+        has_start_pose_ = true;
+        initial_goal_distance_ = std::hypot(
+            goalPose.pose.position.x - start_pose_.pose.position.x,
+            goalPose.pose.position.y - start_pose_.pose.position.y);
         }
         if (!nav2_interface_->canSendNewGoal()) {
         LOG_WARN(
@@ -162,6 +184,24 @@ namespace roadmap_explorer
         return BT::NodeStatus::FAILURE;
         }
         if (nav2_interface_->getGoalStatus() == NavGoalStatus::SUCCEEDED) {
+        geometry_msgs::msg::PoseStamped current_pose;
+        if (has_start_pose_ && initial_goal_distance_ <= noop_goal_distance_ &&
+            explore_costmap_ros_ &&
+            explore_costmap_ros_->getRobotPose(current_pose))
+        {
+            const double progress = std::hypot(
+                current_pose.pose.position.x - start_pose_.pose.position.x,
+                current_pose.pose.position.y - start_pose_.pose.position.y);
+            if (progress < noop_min_progress_) {
+            LOG_WARN(
+                "Nav2 accepted an already-reached frontier: initial goal "
+                "distance=" << initial_goal_distance_ << "m, robot progress=" <<
+                progress << "m. Blacklisting it immediately so Roadmap must "
+                "select a different frontier.");
+            markFrontierFailed(allocatedFrontier);
+            return BT::NodeStatus::FAILURE;
+            }
+        }
         LOG_WARN("Nav2 goal has succeeded!");
         }
         return BT::NodeStatus::SUCCESS;
@@ -186,11 +226,16 @@ namespace roadmap_explorer
     std::shared_ptr<nav2_util::LifecycleNode> ros_node_ptr_;
     std::shared_ptr<nav2_costmap_2d::Costmap2DROS> explore_costmap_ros_;
     geometry_msgs::msg::PoseStamped last_sent_goal_;
+    geometry_msgs::msg::PoseStamped start_pose_;
     bool has_last_sent_goal_{false};
+    bool has_start_pose_{false};
     bool cancel_due_to_invalid_goal_{false};
+    double initial_goal_distance_{std::numeric_limits<double>::infinity()};
     double boundary_margin_{0.20};
     double max_projection_distance_{0.60};
     double robot_seed_search_radius_{0.30};
+    double noop_goal_distance_{0.18};
+    double noop_min_progress_{0.05};
 
     void markFrontierFailed(const FrontierPtr & frontier)
     {

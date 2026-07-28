@@ -78,6 +78,11 @@ roadmap_explorer_node:
       # base_link落入膨胀/未知栅格时，从周围最近自由栅格启动连通搜索，
       # 避免将整批正常Frontier连续误判为不可达。
       frontier_goal_robot_seed_radius: 0.30
+      # 投影后的目标若一开始就在Nav2到达容差附近，而且本次成功时车体
+      # 实际移动不足5cm，则它只是一个“零位移成功”前沿。立即将该前沿
+      # 拉黑，防止Roadmap每0.6秒重复发送同一点直到30秒看门狗触发。
+      frontier_goal_noop_distance: 0.18
+      frontier_goal_noop_min_progress: 0.05
       # 20m x 20m 的保护边界，覆盖当前赛场且避免错误前沿无限扩张。
       exploration_boundary: [10.0, 10.0, 10.0, -10.0, -10.0, -10.0, -10.0, 10.0]
       abort_exploration_on_nav2_abort: false
