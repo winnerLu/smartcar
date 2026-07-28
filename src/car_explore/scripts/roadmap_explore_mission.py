@@ -103,6 +103,11 @@ class RoadmapExploreMission(Node):
         self.active_nav_target: Optional[PoseStamped] = None
         self.active_nav_purpose: Optional[str] = None
         self.initial_plan_candidate: Optional[PoseStamped] = None
+        self.initial_plan_candidates: List[PoseStamped] = []
+        self.initial_plan_index = 0
+        self.direct_plan_candidate: Optional[PoseStamped] = None
+        self.direct_plan_candidates: List[PoseStamped] = []
+        self.direct_plan_index = 0
         self.nav_cancel_reason: Optional[str] = None
         self.nav_sequence = 0
         self.plan_in_progress = False
@@ -135,6 +140,7 @@ class RoadmapExploreMission(Node):
         self.node_start_time = self._now_seconds()
         self.mission_start_time = 0.0
         self.next_direct_check_time = 0.0
+        self.next_target_candidate_log_time = 0.0
         self.last_wait_log_time = 0.0
         self.exploration_progress_pose: Optional[Point] = None
         self.exploration_progress_time = 0.0
@@ -194,7 +200,7 @@ class RoadmapExploreMission(Node):
             'goal_directed_mode': True,
             'goal_forward': 3.0,
             'goal_left': 0.0,
-            'goal_radius': 0.25,
+            'goal_radius': 0.15,
             'visual_parking_enabled': True,
             'preparking_distance': 0.10,
             'position_arrival_tolerance': 0.06,
@@ -514,8 +520,7 @@ class RoadmapExploreMission(Node):
                     now < self.next_direct_check_time):
                 return
             self.next_direct_check_time = now + self.direct_check_period
-            if self._target_is_known_free():
-                self._request_direct_path()
+            self._request_direct_path()
             return
 
         if self.state in (
@@ -653,7 +658,8 @@ class RoadmapExploreMission(Node):
             f'Roadmap target=({goal_x:.2f}, {goal_y:.2f}), '
             f'relative=({self.goal_forward:.2f}m forward, {self.goal_left:.2f}m left). '
             f'The {self.preparking_distance:.2f}m pre-parking standoff will '
-            'be measured backward along a reachable Nav2 path. '
+            'be measured backward along a reachable Nav2 path to the '
+            f'nearest safe candidate within {self.goal_radius:.2f}m. '
             'Final Nav2 arrival uses XY position only; yaw is not a completion condition.')
 
         if (
@@ -833,59 +839,83 @@ class RoadmapExploreMission(Node):
 
     def _check_initial_direct_path(self):
         """Skip Roadmap when a path-derived pre-parking pose is already safe."""
-        if not self._target_is_known_free():
+        self.initial_plan_candidates = self._known_safe_target_candidates()
+        self.initial_plan_index = 0
+        if not self.initial_plan_candidates:
             self.get_logger().info(
-                'Initial target cell is not known-free; starting Roadmap '
-                'exploration before deriving a pre-parking pose')
+                f'No known-safe target candidate exists within '
+                f'{self.goal_radius:.2f}m of the nominal target; starting '
+                'Roadmap exploration before deriving a pre-parking pose')
             self._send_exploration_goal(new_session=True)
             return
 
-        self.initial_plan_candidate = self.target_pose
         self.plan_in_progress = True
         self.state = 'CHECKING_INITIAL_PATH'
+        self.get_logger().info(
+            f'Found {len(self.initial_plan_candidates)} known-safe initial '
+            f'target candidates within {self.goal_radius:.2f}m; checking '
+            'Nav2 reachability from nearest to farthest')
+        self._send_next_initial_plan()
+
+    def _send_next_initial_plan(self):
+        if self.state != 'CHECKING_INITIAL_PATH':
+            return
+        if self.initial_plan_index >= len(self.initial_plan_candidates):
+            self.get_logger().info(
+                'No known-safe initial target candidate produced a fully '
+                'known path and safe path-derived pre-parking pose; Roadmap '
+                'exploration is required')
+            self._fallback_to_initial_exploration()
+            return
+
+        self.initial_plan_candidate = self.initial_plan_candidates[
+            self.initial_plan_index]
         goal = ComputePathToPose.Goal()
-        goal.goal = self.target_pose
+        goal.goal = self.initial_plan_candidate
         goal.planner_id = str(self.planner_id)
         goal.use_start = False
         future = self.plan_client.send_goal_async(goal)
         future.add_done_callback(self._initial_plan_goal_response)
         self.get_logger().info(
-            'Checking for an initial path to the target so pre-parking can '
-            'be derived from its reachable approach')
+            f'Checking initial target candidate '
+            f'{self.initial_plan_index + 1}/'
+            f'{len(self.initial_plan_candidates)} at '
+            f'{self._target_candidate_description(self.initial_plan_candidate)}')
+
+    def _try_next_initial_plan(self, reason: str):
+        if self.initial_plan_candidate is not None:
+            self.get_logger().info(
+                f'Initial target candidate '
+                f'{self._target_candidate_description(self.initial_plan_candidate)} '
+                f'was not usable: {reason}')
+        self.initial_plan_index += 1
+        self._send_next_initial_plan()
 
     def _initial_plan_goal_response(self, future):
         try:
             goal_handle = future.result()
         except Exception as exc:
-            self.get_logger().warning(
-                f'Initial ComputePathToPose request failed: {exc}; '
-                'starting Roadmap exploration')
-            self._fallback_to_initial_exploration()
+            self._try_next_initial_plan(
+                f'ComputePathToPose request failed: {exc}')
             return
         if self.state != 'CHECKING_INITIAL_PATH':
             if goal_handle.accepted:
                 goal_handle.cancel_goal_async()
             return
         if not goal_handle.accepted:
-            self.get_logger().info(
-                'Nav2 rejected the initial direct-path check; starting '
-                'Roadmap exploration')
-            self._fallback_to_initial_exploration()
+            self._try_next_initial_plan('Nav2 rejected the path request')
             return
         goal_handle.get_result_async().add_done_callback(
             self._initial_plan_result)
 
     def _initial_plan_result(self, future):
-        self.plan_in_progress = False
         if self.state != 'CHECKING_INITIAL_PATH':
             return
         try:
             wrapped = future.result()
         except Exception as exc:
-            self.get_logger().warning(
-                f'Initial ComputePathToPose result failed: {exc}; '
-                'starting Roadmap exploration')
-            self._fallback_to_initial_exploration()
+            self._try_next_initial_plan(
+                f'ComputePathToPose result failed: {exc}')
             return
 
         if (wrapped.status == GoalStatus.STATUS_SUCCEEDED and
@@ -896,32 +926,30 @@ class RoadmapExploreMission(Node):
             if (known_ratio >= self.direct_path_known_ratio and
                     candidate is not None):
                 self.final_candidate = candidate
+                self.plan_in_progress = False
                 self.initial_plan_candidate = None
+                self.initial_plan_candidates = []
                 self.get_logger().info(
-                    f'Initial target path is '
+                    f'Initial candidate path is '
                     f'{known_ratio * 100.0:.0f}% known; skipping Roadmap '
                     'and navigating to its path-derived pre-parking pose')
                 self._send_final_goal()
                 return
             if known_ratio < self.direct_path_known_ratio:
-                self.get_logger().info(
-                    f'Initial target path is only '
-                    f'{known_ratio * 100.0:.0f}% known; Roadmap exploration '
-                    'is required')
+                self._try_next_initial_plan(
+                    f'path is only {known_ratio * 100.0:.0f}% known')
             else:
-                self.get_logger().info(
-                    f'Initial target path cannot provide a safe dynamic '
-                    f'pre-parking pose: {reason}; Roadmap exploration is '
-                    'required')
+                self._try_next_initial_plan(
+                    f'path cannot provide a safe dynamic pre-parking pose: '
+                    f'{reason}')
         else:
-            self.get_logger().info(
-                'No initial Nav2 path to the target; Roadmap '
-                'exploration is required')
-        self._fallback_to_initial_exploration()
+            self._try_next_initial_plan('Nav2 returned no path')
 
     def _fallback_to_initial_exploration(self):
         self.plan_in_progress = False
         self.initial_plan_candidate = None
+        self.initial_plan_candidates = []
+        self.initial_plan_index = 0
         if self.state in ('FAILED', 'COMPLETE'):
             return
         self._send_exploration_goal(new_session=True)
@@ -1103,20 +1131,56 @@ class RoadmapExploreMission(Node):
     def _request_direct_path(self):
         if self.target_pose is None:
             return
+        self.direct_plan_candidates = self._known_safe_target_candidates()
+        self.direct_plan_index = 0
+        if not self.direct_plan_candidates:
+            self._log_target_candidate_wait(
+                f'No known-safe target candidate exists within '
+                f'{self.goal_radius:.2f}m '
+                f'({self._nominal_target_cell_description()}); '
+                'Roadmap exploration continues')
+            return
         self.plan_in_progress = True
+        self._send_next_direct_plan()
+
+    def _send_next_direct_plan(self):
+        if self.state != 'EXPLORING':
+            self.plan_in_progress = False
+            self.direct_plan_candidate = None
+            self.direct_plan_candidates = []
+            return
+        if self.direct_plan_index >= len(self.direct_plan_candidates):
+            checked = len(self.direct_plan_candidates)
+            self.plan_in_progress = False
+            self.direct_plan_candidate = None
+            self.direct_plan_candidates = []
+            self._log_target_candidate_wait(
+                f'Checked {checked} known-safe target candidates within '
+                f'{self.goal_radius:.2f}m, but none produced a reachable '
+                'fully-known path and safe pre-parking pose; Roadmap '
+                'exploration continues')
+            return
+
+        self.direct_plan_candidate = self.direct_plan_candidates[
+            self.direct_plan_index]
         goal = ComputePathToPose.Goal()
-        goal.goal = self.target_pose
+        goal.goal = self.direct_plan_candidate
         goal.planner_id = str(self.planner_id)
         goal.use_start = False
         future = self.plan_client.send_goal_async(goal)
         future.add_done_callback(self._plan_goal_response)
 
+    def _try_next_direct_plan(self):
+        self.direct_plan_index += 1
+        self._send_next_direct_plan()
+
     def _plan_goal_response(self, future):
         try:
             goal_handle = future.result()
         except Exception as exc:
-            self.plan_in_progress = False
-            self.get_logger().warning(f'Final ComputePathToPose request failed: {exc}')
+            self.get_logger().warning(
+                f'Target-candidate ComputePathToPose request failed: {exc}')
+            self._try_next_direct_plan()
             return
         if self.state != 'EXPLORING':
             if goal_handle.accepted:
@@ -1124,40 +1188,45 @@ class RoadmapExploreMission(Node):
             self.plan_in_progress = False
             return
         if not goal_handle.accepted:
-            self.plan_in_progress = False
+            self._try_next_direct_plan()
             return
         goal_handle.get_result_async().add_done_callback(self._plan_result)
 
     def _plan_result(self, future):
-        self.plan_in_progress = False
         if self.state != 'EXPLORING':
+            self.plan_in_progress = False
             return
         try:
             wrapped = future.result()
         except Exception as exc:
-            self.get_logger().warning(f'Final ComputePathToPose result failed: {exc}')
+            self.get_logger().warning(
+                f'Target-candidate ComputePathToPose result failed: {exc}')
+            self._try_next_direct_plan()
             return
         if (wrapped.status != GoalStatus.STATUS_SUCCEEDED or
                 not wrapped.result.path.poses):
+            self._try_next_direct_plan()
             return
         known_ratio = self._known_path_ratio(wrapped.result.path)
         if known_ratio < self.direct_path_known_ratio:
-            self.get_logger().info(
-                f'Target path is only {known_ratio * 100.0:.0f}% known; '
-                'Roadmap exploration continues')
+            self._try_next_direct_plan()
             return
 
-        candidate, reason = self._dynamic_preparking_from_path(
+        candidate, _reason = self._dynamic_preparking_from_path(
             wrapped.result.path)
         if candidate is None:
-            self.get_logger().info(
-                f'Target path cannot yet provide a safe dynamic pre-parking '
-                f'pose: {reason}; Roadmap exploration continues')
+            self._try_next_direct_plan()
             return
 
+        selected = self.direct_plan_candidate
+        self.plan_in_progress = False
+        self.direct_plan_candidate = None
+        self.direct_plan_candidates = []
         self.final_candidate = candidate
         self.get_logger().info(
-            f'Target path has {known_ratio * 100.0:.0f}% known cells and '
+            f'Target candidate '
+            f'{self._target_candidate_description(selected)} has a path '
+            f'with {known_ratio * 100.0:.0f}% known cells and '
             f'a safe path-derived pre-parking pose; canceling Roadmap '
             'exploration and switching to position-only final Nav2 navigation')
         self._cancel_exploration_for_final_goal()
@@ -2435,8 +2504,112 @@ class RoadmapExploreMission(Node):
             return False
         return True
 
+    def _known_safe_target_candidates(self) -> List[PoseStamped]:
+        """
+        Return safe map cells near the nominal board center, nearest first.
+
+        The nominal metric target remains unchanged for camera warm-up and
+        Tag handoff. These candidates only provide reachable Nav2 approach
+        endpoints when a few SLAM cells at the exact target are still unknown.
+        Every returned endpoint is known-free and has the configured clearance
+        disk; ComputePathToPose subsequently verifies reachability.
+        """
+        if self.latest_map is None or self.target_pose is None:
+            return []
+        msg = self.latest_map
+        target = self.target_pose.pose.position
+        target_cell = self._world_to_map(msg, target.x, target.y)
+        if target_cell is None or msg.info.resolution <= 0.0:
+            return []
+
+        orientation = self.target_pose.pose.orientation
+        target_yaw = math.atan2(
+            2.0 * (
+                orientation.w * orientation.z +
+                orientation.x * orientation.y),
+            1.0 - 2.0 * (
+                orientation.y * orientation.y +
+                orientation.z * orientation.z))
+        radius = max(0.0, self.goal_radius)
+        cell_radius = math.ceil(radius / msg.info.resolution)
+        safe_cells: List[Tuple[float, int, int, float, float]] = []
+
+        for mx in range(
+                target_cell[0] - cell_radius,
+                target_cell[0] + cell_radius + 1):
+            for my in range(
+                    target_cell[1] - cell_radius,
+                    target_cell[1] + cell_radius + 1):
+                world = self._map_to_world(msg, mx, my)
+                if world is None:
+                    continue
+                distance = math.hypot(
+                    world[0] - target.x, world[1] - target.y)
+                if distance > radius + 1e-9:
+                    continue
+                cell = (mx, my)
+                if (not self._is_free(msg, mx, my) or
+                        not self._safe_endpoint(msg, cell)):
+                    continue
+                safe_cells.append(
+                    (distance, mx, my, world[0], world[1]))
+
+        safe_cells.sort(key=lambda item: (item[0], item[1], item[2]))
+        candidates: List[PoseStamped] = []
+
+        # Preserve the exact metric target when its cell is already safe.
+        # Otherwise use cell centers so no candidate sits on an uncertain
+        # boundary between free and unknown occupancy.
+        if (self._is_free(msg, target_cell[0], target_cell[1]) and
+                self._safe_endpoint(msg, target_cell)):
+            candidates.append(
+                self._make_pose(target.x, target.y, target_yaw))
+
+        for _distance, mx, my, wx, wy in safe_cells:
+            if (mx, my) == target_cell and candidates:
+                continue
+            candidates.append(self._make_pose(wx, wy, target_yaw))
+        return candidates
+
+    def _target_candidate_description(
+            self, candidate: Optional[PoseStamped]) -> str:
+        if candidate is None or self.target_pose is None:
+            return '(unavailable)'
+        point = candidate.pose.position
+        target = self.target_pose.pose.position
+        offset = math.hypot(point.x - target.x, point.y - target.y)
+        return f'({point.x:.2f}, {point.y:.2f}), offset={offset:.2f}m'
+
+    def _nominal_target_cell_description(self) -> str:
+        if self.latest_map is None or self.target_pose is None:
+            return 'nominal target cell unavailable'
+        target = self.target_pose.pose.position
+        cell = self._world_to_map(
+            self.latest_map, target.x, target.y)
+        if cell is None:
+            return 'nominal target is outside the current map'
+        value = self._cell_value(self.latest_map, cell[0], cell[1])
+        if value is None:
+            state = 'outside'
+        elif value < 0:
+            state = 'unknown'
+        elif value <= self.free_threshold:
+            state = 'free'
+        elif value >= self.occupied_threshold:
+            state = 'occupied'
+        else:
+            state = 'uncertain'
+        return f'nominal target cell={state}, cost={value}'
+
+    def _log_target_candidate_wait(self, message: str):
+        now = self._now_seconds()
+        if now < self.next_target_candidate_log_time:
+            return
+        self.next_target_candidate_log_time = now + 10.0
+        self.get_logger().info(message)
+
     def _target_is_known_free(self) -> bool:
-        """Return whether Nav2 may meaningfully plan to the mission target."""
+        """Return whether the exact nominal target cell is known-free."""
         if self.latest_map is None or self.target_pose is None:
             return False
         msg = self.latest_map

@@ -93,7 +93,7 @@ ros2 launch car_navigation slam_navigation.launch.py
 ros2 launch car_explore roadmap_exploration.launch.py \
   goal_forward:=3.2 \
   goal_left:=-0.6 \
-  goal_radius:=0.25 \
+  goal_radius:=0.15 \
   preparking_distance:=0.10
 ```
 
@@ -101,8 +101,8 @@ ros2 launch car_explore roadmap_exploration.launch.py \
 
 - `goal_forward`：启动瞬间沿车头向前为正，单位 m。
 - `goal_left`：车体左侧为正、右侧为负，单位 m。
-- `goal_radius`：标称终点位置的不确定范围，同时限制搜索偏移，默认 0.25m。
-- `preparking_distance`：沿当前可达 Nav2 路径从目标反向量取的距离，默认 0.10m。
+- `goal_radius`：标称终点周围已知安全 Nav2 候选的搜索半径，同时限制视觉搜索偏移，默认 0.15m。名义终点不会改变，最终仍由完整 Tag 确认。
+- `preparking_distance`：沿当前可达 Nav2 路径从所选安全候选反向量取的距离，默认 0.10m。
 - `position_arrival_tolerance`：任务节点位置交接容差，默认0.06m。专用行为树
   选择 `position_goal_checker`（XY 0.05m、航向不约束），不会进入
   `RotateToGoal`；普通 Nav2 任务仍使用原 `goal_checker`。

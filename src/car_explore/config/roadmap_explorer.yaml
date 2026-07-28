@@ -159,10 +159,12 @@ roadmap_explore_mission:
     goal_directed_mode: true
     goal_forward: 3.0
     goal_left: 0.0
-    goal_radius: 0.25
+    # 精确终点仍未知时，只在该半径内寻找已知空闲且满足端点净空的
+    # Nav2候选；名义终点不变，最终仍由完整Tag确认。
+    goal_radius: 0.15
     visual_parking_enabled: true
-    # 先规划到停车板中心，再沿当前可达路径反向量取预泊车距离；任务节点
-    # 按XY距离主动取消，不等待SimpleGoalChecker的终点航向对齐。
+    # 先规划到停车板中心附近的安全候选，再沿该可达路径反向量取预泊车
+    # 距离；任务节点按XY距离主动取消，不等待终点航向对齐。
     preparking_distance: 0.10
     # 专用position_goal_checker为0.05m；任务节点在0.06m内主动交接。
     position_arrival_tolerance: 0.06

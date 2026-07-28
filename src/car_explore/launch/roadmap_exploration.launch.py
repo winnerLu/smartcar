@@ -82,8 +82,8 @@ def generate_launch_description():
             'goal_left', default_value='0.0',
             description='终点相对启动时左侧距离(m)，右侧为负'),
         DeclareLaunchArgument(
-            'goal_radius', default_value='0.25',
-            description='标称终点不确定范围及视觉搜索上限(m)'),
+            'goal_radius', default_value='0.15',
+            description='标称终点周围已知安全Nav2候选及视觉搜索上限(m)'),
         DeclareLaunchArgument(
             'visual_parking_enabled', default_value='true',
             description='到预泊车点后确认完整Tag并交给视觉泊车'),
@@ -94,7 +94,7 @@ def generate_launch_description():
             'video_device', default_value='/dev/camera_c270'),
         DeclareLaunchArgument(
             'preparking_distance', default_value='0.10',
-            description='沿当前可达Nav2路径从目标向后量取的预泊车距离(m)'),
+            description='沿当前可达Nav2路径从所选安全候选向后量取的预泊车距离(m)'),
         DeclareLaunchArgument(
             'position_arrival_tolerance', default_value='0.06',
             description='Nav2位置到达容差(m)，不检查终点航向'),

@@ -390,8 +390,8 @@ def test_dynamic_preparking_is_derived_from_target_path_not_start_heading():
     assert 'self.preparking_pose = None' in start
     assert 'preparking_point(' not in mission
     assert 'preparking_point(' not in helper
-    assert 'goal.goal = self.target_pose' in initial
-    assert 'goal.goal = self.target_pose' in periodic
+    assert 'goal.goal = self.initial_plan_candidate' in initial
+    assert 'goal.goal = self.direct_plan_candidate' in periodic
     assert 'path_standoff_point(points, self.preparking_distance)' in derive
     assert 'self._path_tail_known_free(path, candidate)' in derive
     assert "clearance != 'safe'" in derive
@@ -401,6 +401,46 @@ def test_dynamic_preparking_is_derived_from_target_path_not_start_heading():
     assert "preparking_distance', default_value='0.10'" in (
         package / 'launch' / 'roadmap_exploration.launch.py').read_text()
     assert 'preparking_distance: 0.10' in params
+
+
+def test_goal_radius_searches_known_safe_reachable_target_candidates():
+    package = Path(__file__).parents[1]
+    mission = (
+        package / 'scripts' / 'roadmap_explore_mission.py'
+    ).read_text()
+    launch = (
+        package / 'launch' / 'roadmap_exploration.launch.py'
+    ).read_text()
+    params = (
+        package / 'config' / 'roadmap_explorer.yaml'
+    ).read_text()
+    launcher = (
+        package.parents[1] / 'start_roadmap_mission.sh'
+    ).read_text()
+
+    candidate_search = mission.split(
+        '    def _known_safe_target_candidates', 1)[1].split(
+        '    def _target_candidate_description', 1)[0]
+    periodic = mission.split(
+        '    def _request_direct_path', 1)[1].split(
+        '    def _cancel_exploration_for_final_goal', 1)[0]
+
+    assert "'goal_radius': 0.15" in mission
+    assert "goal_radius', default_value='0.15'" in launch
+    assert 'goal_radius: 0.15' in params
+    assert 'GOAL_RADIUS="${GOAL_RADIUS:-0.15}"' in launcher
+    assert 'cell_radius = math.ceil(radius / msg.info.resolution)' in (
+        candidate_search)
+    assert 'distance > radius + 1e-9' in candidate_search
+    assert 'self._is_free(msg, mx, my)' in candidate_search
+    assert 'self._safe_endpoint(msg, cell)' in candidate_search
+    assert 'self._is_free(msg, target_cell[0], target_cell[1])' in (
+        candidate_search)
+    assert 'safe_cells.sort(' in candidate_search
+    assert 'goal.goal = self.initial_plan_candidate' in mission
+    assert 'goal.goal = self.direct_plan_candidate' in periodic
+    assert 'self._try_next_direct_plan()' in periodic
+    assert 'self._target_candidate_description(selected)' in periodic
 
 
 def test_exploration_tag_handoff_precedes_stall_backtracking():
