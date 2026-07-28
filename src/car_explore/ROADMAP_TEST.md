@@ -117,9 +117,9 @@ ros2 launch car_explore roadmap_exploration.launch.py \
   不再执行后退或旋转；失败后由 Roadmap 立即拉黑并重新选点。40s 看门狗
   仅在 Roadmap 自身没有结束尝试时才接管，避免两层恢复逻辑争夺控制权。
 - `clearance_radius`：`slam_navigation.launch.py` 对原始 `/map` 的占用栅格
-  执行半径 0.175m 的形态学闭运算并发布 `/map_clearance`。临时膨胀后会
+  执行半径 0.15m 的形态学闭运算并发布 `/map_clearance`。临时膨胀后会
   用同一半径腐蚀回来，所以独立障碍与普通墙面不会整体加粗；只有小于约
-  0.35m 的已知窄通道会留下封路栅格。未知栅格保持未知，不会提前消灭
+  0.30m 的已知窄通道会留下封路栅格。未知栅格保持未知，不会提前消灭
   frontier。Roadmap 和 Nav2 全局规划共用这张地图，原始 `/map` 仍用于
   SLAM、目标路径已知率和视觉泊车交接。地图分辨率为 0.05m，实测截止
   宽度可能有一个栅格左右的误差。

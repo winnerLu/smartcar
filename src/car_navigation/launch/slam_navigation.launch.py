@@ -52,7 +52,7 @@ def generate_launch_description():
         'use_sim_time', default_value='false',
         description='仿真时间(实机 false)')
     declare_clearance_radius = DeclareLaunchArgument(
-        'clearance_radius', default_value='0.175',
+        'clearance_radius', default_value='0.15',
         description='窄通道闭合半径(m)，两倍为封闭的通道宽度阈值')
 
     # ---- SLAM(实时建图 + map->odom)----

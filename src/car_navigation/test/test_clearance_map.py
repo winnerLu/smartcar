@@ -10,8 +10,8 @@ MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
 
-def test_offsets_encode_35cm_minimum_passage_at_5cm_resolution():
-    offsets = MODULE.clearance_offsets(0.175, 0.05)
+def test_offsets_encode_30cm_minimum_passage_at_5cm_resolution():
+    offsets = MODULE.clearance_offsets(0.15, 0.05)
 
     assert (0, 0) in offsets
     assert (3, 0) in offsets
@@ -28,7 +28,7 @@ def test_closing_fills_a_corridor_narrower_than_twice_radius():
     for y in range(height):
         data[y * width + 1] = 100
         data[y * width + 7] = 100
-    offsets = MODULE.clearance_offsets(0.175, 0.05)
+    offsets = MODULE.clearance_offsets(0.15, 0.05)
 
     filtered = MODULE.close_narrow_passages(
         data, width, height, offsets)
@@ -45,7 +45,7 @@ def test_closing_does_not_thicken_an_isolated_obstacle():
     data[centre] = 100
 
     filtered = MODULE.close_narrow_passages(
-        data, width, height, MODULE.clearance_offsets(0.175, 0.05))
+        data, width, height, MODULE.clearance_offsets(0.15, 0.05))
 
     assert filtered == data
 
@@ -59,9 +59,9 @@ def test_closing_leaves_a_wide_corridor_open():
         source[y * width + 9] = 100
 
     filtered = MODULE.close_narrow_passages(
-        source, width, height, MODULE.clearance_offsets(0.175, 0.05))
+        source, width, height, MODULE.clearance_offsets(0.15, 0.05))
 
-    # The inner wall edges are 40cm apart, above the 35cm threshold.
+    # The inner wall edges are 40cm apart, above the 30cm threshold.
     assert filtered[7 * width + 5] == 0
     assert filtered == source
 
@@ -76,7 +76,7 @@ def test_closing_never_converts_unknown_cells():
     data[7 * width + 4] = -1
 
     filtered = MODULE.close_narrow_passages(
-        data, width, height, MODULE.clearance_offsets(0.175, 0.05))
+        data, width, height, MODULE.clearance_offsets(0.15, 0.05))
 
     assert filtered[7 * width + 4] == -1
 

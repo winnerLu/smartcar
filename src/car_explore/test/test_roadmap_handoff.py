@@ -338,17 +338,17 @@ def test_roadmap_and_nav2_share_narrow_passage_map():
 
     assert 'map_topic: "/map_clearance"' in roadmap_params
     assert 'map_topic: /map_clearance' in nav_params
-    assert "'clearance_radius', default_value='0.175'" in slam_launch
+    assert "'clearance_radius', default_value='0.15'" in slam_launch
     assert 'startup_escape_radius' not in slam_launch
     assert '窄通道闭合半径' in slam_launch
     assert "'output_map_topic': '/map_clearance'" in slam_launch
-    assert 'inflation_radius: 0.20' in nav_params
+    assert 'inflation_radius: 0.15' in nav_params
     assert 'cost_scaling_factor: 3.0' in nav_params
     assert 'ObstacleFootprint.scale: 0.05' in nav_params
     assert 'BaseObstacle.scale' not in nav_params
     assert 'footprint_padding: 0.04' in nav_params
     assert 'observation_persistence: 0.5' in nav_params
-    assert 'inflation_radius: 0.12' in roadmap_params
+    assert 'inflation_radius: 0.08' in roadmap_params
 
 
 def test_initial_known_path_skips_roadmap_before_nav2_handoff():

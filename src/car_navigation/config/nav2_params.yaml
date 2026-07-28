@@ -164,7 +164,7 @@ global_costmap:
       plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
-        # clearance_map只封闭小于约0.35m的已知窄通道；独立障碍与普通
+        # clearance_map只封闭小于约0.30m的已知窄通道；独立障碍与普通
         # 墙面轮廓不加粗。原始/map仍供SLAM和任务交接判断使用。
         map_topic: /map_clearance
         map_subscribe_transient_local: true
@@ -183,9 +183,9 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         # 仅增加软代价来引导A*远离墙边，不改变/map_clearance的
-        # 0.35m窄通道硬封闭规则。
+        # 0.30m窄通道硬封闭规则。
         cost_scaling_factor: 3.0
-        inflation_radius: 0.20
+        inflation_radius: 0.15
 
 # ==================== 局部代价地图 ====================
 local_costmap:

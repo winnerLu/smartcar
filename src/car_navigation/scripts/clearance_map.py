@@ -110,7 +110,7 @@ class ClearanceMap(Node):
         super().__init__('clearance_map')
         self.declare_parameter('input_map_topic', '/map')
         self.declare_parameter('output_map_topic', '/map_clearance')
-        self.declare_parameter('clearance_radius', 0.175)
+        self.declare_parameter('clearance_radius', 0.15)
         self.declare_parameter('occupied_threshold', 65)
 
         self.input_topic = str(

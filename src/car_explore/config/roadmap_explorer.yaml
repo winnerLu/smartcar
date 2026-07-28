@@ -114,7 +114,7 @@ roadmap_explorer_costmap:
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         # 与Nav2全局规划共用窄通道闭合地图，Roadmap不会再选择必须
-        # 经过小于约0.35m通道才能抵达的frontier。
+        # 经过小于约0.30m通道才能抵达的frontier。
         map_topic: "/map_clearance"
         map_subscribe_transient_local: true
         enabled: true
@@ -123,7 +123,7 @@ roadmap_explorer_costmap:
         enabled: true
         # Roadmap 目标选择也保留软安全边界，且半径大于车体内切
         # 半径，避免把 frontier 投影到贴墙位置。
-        inflation_radius: 0.12
+        inflation_radius: 0.08
         cost_scaling_factor: 5.0
         inflate_unknown: false
         inflate_around_unknown: false
